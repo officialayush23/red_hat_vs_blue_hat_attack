@@ -296,22 +296,22 @@
   "autoencoder_weakness_round2_transaction_fraud": {
     "metrics": {
       "threshold": 0.11958900839090347,
-      "precision": 0.2820661636680209,
-      "recall": 0.405,
-      "f1": 0.3325350667122819,
-      "roc_auc": 0.996578214393255,
-      "pr_auc": 0.1809152036477466,
+      "precision": 0.04846153846153846,
+      "recall": 0.315,
+      "f1": 0.084,
+      "roc_auc": 0.9922723393101237,
+      "pr_auc": 0.022268630550880467,
       "false_positive_rate": 0.0008932330197269465,
-      "n_samples": 1386057,
-      "n_positive": 1200,
-      "true_positives": 486,
+      "n_samples": 1385057,
+      "n_positive": 200,
+      "true_positives": 63,
       "false_positives": 1237,
       "true_negatives": 1383620,
-      "false_negatives": 714
+      "false_negatives": 137
     },
     "before_recall": 0.43,
-    "after_recall": 0.405,
-    "delta": -0.024999999999999967,
+    "after_recall": 0.315,
+    "delta": -0.11499999999999999,
     "original_combo": {
       "amount": "mid",
       "velocity": "moderate",
@@ -319,14 +319,14 @@
       "time_of_day": "off_hours"
     },
     "hardened_combo": {
-      "amount": "low",
+      "amount": "mid",
       "merchant_category": "new",
       "time_of_day": "business_hours",
-      "velocity": "moderate"
+      "velocity": "low"
     },
     "reasons": [
-      "The autoencoder's low recall (0.43) on off-hours mid-amount transactions indicates it relies on strong distribution drift to generate high reconstruction error.",
-      "Masking the transaction within standard business hours and lowering the amount reduces its baseline anomaly score, directly targeting the autoencoder's tendency to treat low-value daytime events as benign."
+      "The autoencoder relies on reconstruction error to flag anomalies, but already exhibits a low recall of 0.43 under off-hours and moderate velocity conditions.",
+      "Lowering the velocity to 'low' and moving the time to 'business_hours' significantly reduces the statistical anomaly footprint, likely decreasing reconstruction error and allowing stealthier fraudulent transactions to bypass detection."
     ],
     "note": "Section 8 step 6 -- targeted second round on the weakest signal found in step 5."
   },
@@ -371,9 +371,9 @@
   },
   "gnn_adversarial_eval_local_reverify": {
     "metrics": {
-      "recall": 0.002362204724409449,
+      "recall": 0.0018987341772151898,
       "threshold": 0.822209894657135,
-      "n_cases": 1270
+      "n_cases": 1580
     },
     "note": "Local, independent re-run of the Colab-reported gnn_adversarial_eval recall -- see docs/DATASETS.md. Compare this number against gnn_adversarial_eval (from the Colab notebook) before trusting either one alone."
   },

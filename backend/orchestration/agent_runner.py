@@ -225,30 +225,90 @@ def _family_metrics_from(metrics: dict, fam: str):
 
 
 def _build_weaknesses(family_metrics: dict, weakest) -> list:
-    """Real weakness cards for WeaknessAnalysisPage/ReportPage -- shape
-    matches frontend/src/data/mockStore.js's getWeaknesses() output
-    field-for-field, but every value here comes from _family_metrics_from()
-    (real metrics.json numbers), not a random generator."""
+    """Real weakness cards for WeaknessAnalysisPage/ReportPage. Every value
+    comes from _family_metrics_from() (real metrics.json numbers).
+
+    2026-08-31 -- this used to emit one "Defense weakness detected" card per
+    family unconditionally, ranked by recall, and label the lowest-ranked
+    one the run's weakness even when its recall was 1.0000. On a run where
+    nothing was missed that rendered as:
+
+        Defense weakness detected -- Account takeover      [High]
+        Detection rate 100%   Miss rate 0%
+        WHY THE DEFENSE MISSES THIS
+        - Lowest real recall this run (1.0000) among the families scored
+
+    which is incoherent: a family that missed nothing is not a weakness,
+    "why the defense misses this" has no answer, and calling it High
+    severity next to a 0% miss rate destroys trust in every other number on
+    the page. A run where nothing was missed must say so.
+
+    So: a family only becomes a weakness card when it actually missed
+    something (recall < 1.0). Families that missed nothing are still
+    reported -- as clean results, with the false-positive count that a
+    perfect recall usually costs -- because "we caught everything, here is
+    what that cost in customer friction" is the honest framing, and because
+    a perfect recall is itself worth flagging as a signal that the attacks
+    may be too easy rather than the defense being flawless."""
     out = []
+    # Weakest-first, but a family with a real miss always outranks one
+    # without, regardless of any other metric.
     for fam, m in sorted(family_metrics.items(), key=lambda kv: kv[1]["recall"]):
-        detection_pct = round(m["recall"] * 100, 1)
-        is_weakest = fam == weakest
+        recall = m["recall"]
+        detection_pct = round(recall * 100, 1)
+        missed_something = recall < 1.0
+        is_weakest = fam == weakest and missed_something
+        fps = m.get("false_positives")
+        fp_note = (
+            f"At this operating point it also raised {fps:,} false positives on legitimate traffic."
+            if isinstance(fps, (int, float)) and fps else None
+        )
+
+        if missed_something:
+            reasons = [
+                f"Real recall {recall:.4f} on {m['scope']} — "
+                f"{round(100 - detection_pct, 1)}% of this family's attacks reached the system."
+            ]
+            if fp_note:
+                reasons.append(fp_note)
+            out.append({
+                "id": f"weak-{fam}",
+                "category": FAMILY_TO_CATEGORY.get(fam, fam),
+                "label": FAMILY_LABEL.get(fam, fam),
+                "detectionRate": detection_pct,
+                "missRate": round(100 - detection_pct, 1),
+                "kind": "weakness",
+                "reasons": reasons,
+                "recommendedAction": (
+                    "Run a real adaptive mutation round targeting this family (severity=adaptive)"
+                    if is_weakest else "Queue for a later adaptive round — a real miss, but not the largest this run"
+                ),
+                "severity": "high" if is_weakest else "medium",
+            })
+            continue
+
+        # recall == 1.0 -- not a weakness. Reported honestly as a clean
+        # result, with the caveat that earns it.
+        reasons = [
+            f"No misses at this operating point — real recall {recall:.4f} on {m['scope']}."
+        ]
+        if fp_note:
+            reasons.append(fp_note)
+        reasons.append(
+            "A perfect recall is more likely to mean the generated attacks for this family are too "
+            "easily separated than that the defense is flawless — the next adaptive round should make "
+            "them harder rather than treat this as solved."
+        )
         out.append({
-            "id": f"weak-{fam}",
+            "id": f"clean-{fam}",
             "category": FAMILY_TO_CATEGORY.get(fam, fam),
             "label": FAMILY_LABEL.get(fam, fam),
             "detectionRate": detection_pct,
-            "missRate": round(100 - detection_pct, 1),
-            "reasons": (
-                [f"Lowest real recall this run ({m['recall']:.4f}) among the families scored — from {m['scope']}."]
-                if is_weakest else
-                [f"Not this run's primary weakness — real recall {m['recall']:.4f}, from {m['scope']}."]
-            ),
-            "recommendedAction": (
-                "Run a real adaptive mutation round targeting this family (severity=adaptive)"
-                if is_weakest else "Monitor — not currently the weakest signal this run"
-            ),
-            "severity": "high" if is_weakest else "medium",
+            "missRate": 0.0,
+            "kind": "clean",
+            "reasons": reasons,
+            "recommendedAction": "Raise attack difficulty for this family — nothing to fix in the defense here",
+            "severity": "none",
         })
     return out
 
@@ -468,7 +528,13 @@ def main() -> int:
             if m is not None:
                 family_metrics[fam] = m
         family_recall = {fam: m["recall"] for fam, m in family_metrics.items()}
-        weakest = min(family_recall, key=family_recall.get) if family_recall else None
+        # A family that missed nothing is not a weakness. Picking the
+        # argmin unconditionally made a run where every family scored
+        # recall 1.0 report one of them as "this run's primary weakness"
+        # with a 0% miss rate -- see _build_weaknesses' docstring. Only
+        # families that actually let an attack through are candidates.
+        _missed = {fam: r for fam, r in family_recall.items() if r is not None and r < 1.0}
+        weakest = min(_missed, key=_missed.get) if _missed else None
         tracker.add_step(
             "evaluation",
             detail=(f"Weakest real signal: {weakest} (recall={family_recall.get(weakest)})" if weakest
@@ -476,10 +542,15 @@ def main() -> int:
             observation=(f"Real recall by family: {family_recall}" if family_recall
                          else "metrics.json has no matching entries yet for this scope -- see the Blue Team step above for why"),
             decision=("Flag the lowest real recall as this run's primary weakness" if weakest
-                      else "Nothing to flag -- re-run once metrics.json has this scope's numbers"),
+                      else ("Every family scored caught everything -- no weakness to flag; the honest next "
+                            "move is harder attacks, not a defense fix" if family_recall
+                            else "Nothing to flag -- re-run once metrics.json has this scope's numbers")),
             tool="defend/models/metrics.json (real evidence-gate output)",
             action="Compare real per-family recall across the scored families",
-            result=f"Weakness identified: {weakest}" if weakest else "No weakness identified this run",
+            result=(f"Weakness identified: {weakest}" if weakest
+                    else ("No family missed anything this run (every scored recall = 1.0000) -- reported as a "
+                          "clean result, not as a weakness" if family_recall
+                          else "No weakness identified this run")),
             next_=("Hand off to Adaptation Agent" if args.severity == "adaptive"
                    else "Run complete (severity not adaptive -- no escalation)"),
         )

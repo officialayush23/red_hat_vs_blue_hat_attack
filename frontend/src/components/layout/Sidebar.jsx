@@ -30,7 +30,7 @@ export function Sidebar() {
         <>
           <Separator />
           <div className="px-3 py-3">
-            {!collapsed && <p className="text-[11px] text-muted-foreground">Prototype build · demo data throughout</p>}
+            {!collapsed && <p className="text-[11px] text-muted-foreground">Real evaluation data — read from Supabase</p>}
           </div>
         </>
       }

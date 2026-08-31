@@ -94,7 +94,9 @@ export async function listModelPerformance() {
     .map(({ id, name }) => {
       const row = byId[id];
       const m = row.validation_metrics ?? {};
+      const nSamples = m.n_samples ?? null;
       return {
+        id,
         name,
         modality: row.signal_category ?? "transaction",
         precision: m.precision ?? 0,
@@ -102,7 +104,24 @@ export async function listModelPerformance() {
         f1: m.f1 ?? 0,
         detectionRate: Math.round((m.recall ?? 0) * 100),
         status: row.status,
-        nSamples: m.n_samples,
+        // Evidence strength, carried through so the UI can never show a
+        // headline percentage without the sample size behind it. This is
+        // the difference between "100% on 1.39M rows" and "100% on 6" --
+        // both are real numbers in metrics.json, and only one of them
+        // means anything. video_kyc_detector is currently the latter
+        // (n_samples=6, three fraud and three bonafide), so any chart or
+        // table that renders detectionRate MUST render nSamples with it.
+        nSamples,
+        nPositive: m.n_positive ?? null,
+        falsePositiveRate: m.false_positive_rate ?? null,
+        threshold: m.threshold ?? null,
+        purpose: row.purpose ?? null,
+        dataset: row.dataset ?? null,
+        // Bands are deliberately blunt and stated in the UI, not hidden:
+        // under 30 evaluated samples a percentage is close to meaningless,
+        // under 200 it is indicative at best.
+        evidenceStrength:
+          nSamples === null ? "unknown" : nSamples < 30 ? "provisional" : nSamples < 200 ? "limited" : "strong",
       };
     });
 }

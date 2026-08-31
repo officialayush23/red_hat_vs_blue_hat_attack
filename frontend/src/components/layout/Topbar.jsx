@@ -32,8 +32,13 @@ export function Topbar() {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        {/* Was "Prototype · Demo Data". That stopped being true once every
+            page moved onto real Supabase reads, and a false disclaimer is
+            worse than none: it invites a reviewer to discount real,
+            evidence-gated numbers. This badge now reports the actual
+            source, and useApiMode() reports whether a backend is reachable. */}
         <Badge variant="outline" className="hidden border-border text-xs text-muted-foreground sm:inline-flex">
-          Prototype · Demo Data
+          Live data · Supabase
         </Badge>
         <Button
           variant="ghost"

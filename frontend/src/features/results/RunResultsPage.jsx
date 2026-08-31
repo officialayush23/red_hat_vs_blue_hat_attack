@@ -45,6 +45,23 @@ export function RunResultsPage() {
           <CardTitle>Before vs. after the adaptive feedback loop</CardTitle>
           <CardDescription>Detection rate on {run.scope.map(c => ATTACK_CATEGORY_LABEL[c]).join(", ")}</CardDescription>
         </CardHeader>
+        {/* When no adaptive round actually ran, "100.0% -> 100.0%, +0.0 pts
+            improvement" reads as a broken widget. It isn't -- it is the
+            truthful output of a run where nothing was missed, so the
+            mutation engine had no weakness to target. Say that instead of
+            rendering an empty win. */}
+        {run.improvementPct === 0 && run.detectionRateBefore === run.detectionRateAfter ? (
+          <CardContent className="space-y-2 py-6 text-center">
+            <p className="cn-font-heading text-4xl font-semibold tabular-nums text-foreground">
+              {run.detectionRateAfter.toFixed(1)}%
+            </p>
+            <p className="mx-auto max-w-xl text-sm text-muted-foreground">
+              No adaptive round ran for this scope: every family scored caught every attack, so the mutation
+              engine had no real weakness to target. There is no before/after to show — an unchanged number
+              here is the honest result, not an improvement of zero.
+            </p>
+          </CardContent>
+        ) : (
         <CardContent className="flex flex-col items-center justify-center gap-4 py-6 sm:flex-row sm:gap-8">
           <div className="text-center">
             <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Before mutation</p>
@@ -64,6 +81,7 @@ export function RunResultsPage() {
             <p className="text-xs text-muted-foreground">improvement</p>
           </div>
         </CardContent>
+        )}
       </Card>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

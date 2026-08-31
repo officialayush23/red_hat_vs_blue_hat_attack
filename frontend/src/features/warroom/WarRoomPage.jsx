@@ -149,7 +149,7 @@ export function WarRoomPage() {
               label="Attacks blocked"
               value={(stats?.fraudBlocked ?? 0).toLocaleString()}
               tone="text-emerald-600 dark:text-emerald-400"
-              sub={stats ? `${stats.recallPct.toFixed(1)}% recall` : undefined}
+              sub={stats ? `${stats.recallPct.toFixed(1)}% of scored fraud results` : undefined}
             />
             <Counter
               label="Attacks missed"
@@ -161,13 +161,18 @@ export function WarRoomPage() {
               label="False positives"
               value={(stats?.falsePositives ?? 0).toLocaleString()}
               tone="text-amber-600 dark:text-amber-400"
-              sub={stats ? `${stats.falsePositivePct.toFixed(1)}% of legit traffic` : undefined}
+              sub={stats ? `${stats.falsePositivePct.toFixed(1)}% of scored legitimate samples` : undefined}
             />
+            {/* "Scored results", not "cases": evaluation_results holds one
+                row per (case, evaluation run), so a case scored by three
+                evidence-gate runs is three rows. Labelling a row count as a
+                case count would inflate the corpus by ~2x. The distinct
+                case count is the sub-line, from attack_cases. */}
             <Counter
-              label="Cases scored"
+              label="Scored results"
               value={(stats?.scoredCases ?? 0).toLocaleString()}
               tone="text-foreground"
-              sub={stats ? `${stats.attackCases.toLocaleString()} attack cases generated` : undefined}
+              sub={stats ? `over ${stats.attackCases.toLocaleString()} generated attack cases` : undefined}
             />
           </div>
 
