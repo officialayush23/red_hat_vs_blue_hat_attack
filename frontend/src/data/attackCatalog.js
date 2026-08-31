@@ -1,0 +1,163 @@
+// Static-ish attack family catalog. In production this is a GET /api/attacks
+// response backed by the Red Team's attack taxonomy store; here it's the
+// seed data the mock service layer serves and mutates.
+export const ATTACK_CATALOG = [{
+  id: "atk-mule-trusted-device",
+  name: "Trusted Device + Mule Network",
+  category: "graph",
+  severity: "high",
+  modalities: ["graph", "behavioral", "transaction"],
+  status: "hardening",
+  detectionRate: 89,
+  variants: 214,
+  lastTested: "2026-08-28T14:20:00Z",
+  difficulty: "adaptive",
+  description: "Funds are moved from a trusted device through a chain of low-value probing transfers into a mule account, then escalated once probing goes undetected.",
+  attackChain: ["Trusted device", "New beneficiary added", "Low-value probing transfer", "Mule account receives funds", "Gradual escalation of amounts"]
+}, {
+  id: "atk-low-value-probing",
+  name: "Low-Value Probing Cascade",
+  category: "transaction",
+  severity: "medium",
+  modalities: ["transaction", "anomaly"],
+  status: "active",
+  detectionRate: 94,
+  variants: 168,
+  lastTested: "2026-08-27T09:10:00Z",
+  difficulty: "moderate",
+  description: "A burst of small, below-threshold transactions used to test which amounts and merchants evade rule-based limits before a larger transfer.",
+  attackChain: ["Card/account validated", "Series of sub-threshold charges", "Merchant category rotation", "Threshold boundary identified", "Full-value transaction attempted"]
+}, {
+  id: "atk-synthetic-behavior-drift",
+  name: "Synthetic Behavioral Drift",
+  category: "behavioral",
+  severity: "high",
+  modalities: ["behavioral", "anomaly"],
+  status: "active",
+  detectionRate: 91,
+  variants: 132,
+  lastTested: "2026-08-26T18:45:00Z",
+  difficulty: "hard",
+  description: "Session and typing/navigation patterns are slowly shifted over many sessions so behavioral baselines drift toward an attacker-controlled profile.",
+  attackChain: ["Baseline session captured", "Gradual pattern shift per session", "Device fingerprint held constant", "Behavioral model re-baselines", "High-risk action executed under new baseline"]
+}, {
+  id: "atk-voice-clone-ivr",
+  name: "Voice Clone IVR Takeover",
+  category: "voice",
+  severity: "critical",
+  modalities: ["voice", "behavioral"],
+  status: "hardening",
+  detectionRate: 87,
+  variants: 96,
+  lastTested: "2026-08-28T11:05:00Z",
+  difficulty: "hard",
+  description: "A cloned voice sample is used against IVR/agent-assist authentication to reset credentials or authorize a high-value transfer.",
+  attackChain: ["Voice sample harvested", "Clone generated (GenAI voice model)", "IVR identity challenge attempted", "Knowledge-based fallback tested", "Credential reset or transfer authorized"]
+}, {
+  id: "atk-deepfake-support-call",
+  name: "Deepfake Support-Call Impersonation",
+  category: "voice",
+  severity: "high",
+  modalities: ["voice", "text"],
+  status: "active",
+  detectionRate: 93,
+  variants: 74,
+  lastTested: "2026-08-25T16:30:00Z",
+  difficulty: "hard",
+  description: "Attacker impersonates a bank support agent via cloned voice to socially engineer OTPs or push-authentication approvals from the victim.",
+  attackChain: ["Victim profile scraped", "Cloned agent voice call placed", "Urgency/authority script delivered", "OTP or push-approval requested", "Funds moved via authenticated session"]
+}, {
+  id: "atk-genai-phishing-sms",
+  name: "GenAI Phishing / Smishing Wave",
+  category: "text",
+  severity: "medium",
+  modalities: ["text"],
+  status: "active",
+  detectionRate: 96,
+  variants: 301,
+  lastTested: "2026-08-28T07:15:00Z",
+  difficulty: "easy",
+  description: "LLM-generated, personalized SMS/email lures referencing real merchant and delivery context to harvest credentials or card data.",
+  attackChain: ["Public/leaked context scraped", "Personalized lure generated", "Look-alike domain served", "Credential/card capture", "Rapid account-takeover attempt"]
+}, {
+  id: "atk-quishing-poster",
+  name: "QR Quishing (Parking / Bill Overlay)",
+  category: "qr",
+  severity: "medium",
+  modalities: ["document", "text"],
+  status: "resolved",
+  detectionRate: 98,
+  variants: 58,
+  lastTested: "2026-08-24T13:00:00Z",
+  difficulty: "easy",
+  description: "A malicious QR code is overlaid on legitimate parking meters, invoices or bills, redirecting payment to an attacker-controlled account.",
+  attackChain: ["Legitimate QR identified", "Malicious overlay QR generated", "Physical or PDF placement", "Victim scans and pays", "Funds routed to mule account"]
+}, {
+  id: "atk-invoice-doc-fraud",
+  name: "GenAI Invoice / Document Forgery",
+  category: "document",
+  severity: "high",
+  modalities: ["document", "text"],
+  status: "active",
+  detectionRate: 90,
+  variants: 121,
+  lastTested: "2026-08-27T20:40:00Z",
+  difficulty: "moderate",
+  description: "A fabricated invoice or KYC document, generated or edited with GenAI tooling, is submitted to redirect a vendor payment or pass verification.",
+  attackChain: ["Legitimate document template sourced", "Fields edited/forged via GenAI tooling", "Metadata and formatting normalized", "Submitted through vendor/KYC workflow", "Payment redirected on approval"]
+}, {
+  id: "atk-ato-credential-stuffing",
+  name: "Credential-Stuffing Account Takeover",
+  category: "account-takeover",
+  severity: "high",
+  modalities: ["behavioral", "anomaly", "transaction"],
+  status: "active",
+  detectionRate: 92,
+  variants: 187,
+  lastTested: "2026-08-26T10:20:00Z",
+  difficulty: "moderate",
+  description: "Leaked credential pairs are replayed at scale against login endpoints, with successful logins immediately followed by beneficiary changes.",
+  attackChain: ["Leaked credential pairs sourced", "Distributed low-and-slow login attempts", "Successful match identified", "Session hijacked / new device trusted", "Beneficiary added and funds moved"]
+}, {
+  id: "atk-graph-fanout-mule",
+  name: "Fan-Out Mule Network Laundering",
+  category: "graph",
+  severity: "critical",
+  modalities: ["graph", "transaction"],
+  status: "hardening",
+  detectionRate: 85,
+  variants: 143,
+  lastTested: "2026-08-28T19:55:00Z",
+  difficulty: "adaptive",
+  description: "Funds are split across many first-degree mule accounts and re-converged two hops later, diluting any single account's risk signal.",
+  attackChain: ["Source account compromised", "Funds fanned out to multiple mules", "Mules hold funds past cooling window", "Re-convergence at second-hop account", "Cash-out or re-transfer abroad"]
+}, {
+  id: "atk-synthetic-identity-onboarding",
+  name: "Synthetic Identity Onboarding",
+  category: "document",
+  severity: "high",
+  modalities: ["document", "behavioral"],
+  status: "active",
+  detectionRate: 88,
+  variants: 102,
+  lastTested: "2026-08-25T08:50:00Z",
+  difficulty: "hard",
+  description: "A blended synthetic identity (real SSN/PAN fragments + fabricated details) is used to onboard a new account that ages before being used for fraud.",
+  attackChain: ["Real + fabricated identity fragments blended", "Document set generated/forged", "Account onboarded and aged", "Credit or transaction limits built up", "Bust-out transaction executed"]
+}, {
+  id: "atk-anomalous-timing-burst",
+  name: "Off-Hours Timing Burst",
+  category: "behavioral",
+  severity: "low",
+  modalities: ["behavioral", "anomaly"],
+  status: "resolved",
+  detectionRate: 97,
+  variants: 64,
+  lastTested: "2026-08-23T05:30:00Z",
+  difficulty: "easy",
+  description: "A burst of transactions timed to off-hours and low-monitoring windows to reduce the chance of manual review before funds clear.",
+  attackChain: ["Monitoring windows profiled", "Off-hours transaction burst", "Multiple merchant categories touched", "Funds cleared before review window"]
+}];
+export function getAttackById(id) {
+  return ATTACK_CATALOG.find(a => a.id === id);
+}

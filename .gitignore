@@ -1,0 +1,42 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+backend/red/
+# 2026-08-31: these two were NEVER excluded before (only backend/red/ was)
+# and were confirmed still tracked in git -- 61,959 files across all three
+# venvs, almost certainly the entire reason a first push tried to send
+# 2.74 GiB. Full local virtual environments never belong in git regardless
+# of size -- they're rebuilt from requirements-*.txt, not checked in.
+backend/paddleocr_env/
+backend/voice_gen_env/
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Data -- large raw/derived files never go in git
+data/raw/
+data/processed/
+data/generated/
+*.csv
+*.parquet
+
+# Kept intentionally: small trained model artifacts under backend/defend/models/
+# (xgboost.json, lightgbm.txt, autoencoder.pt, gnn.pt) -- do NOT ignore that folder.
+
+# Env / secrets
+.env
+.env.local
+kaggle.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Colab evidence-gate transfer package (2026-08-30) -- data already lives under
+# data/generated/, this is just a duplicate bundled for upload, safe to delete
+colab_document_fraud_package.tar.gz

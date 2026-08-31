@@ -1,0 +1,28 @@
+# Deliberately NOT merged into requirements.txt / the main `red` venv.
+#
+# Chatterbox pins torch==2.6.0 and torchaudio==2.6.0 exactly. The main venv
+# already has torch==2.13.0+cu130 verified working for the autoencoder,
+# XGBoost/LightGBM, and planned GNN training -- installing chatterbox-tts
+# there would force a downgrade and risk breaking that. Voice generation
+# is a one-time batch of ~80 short clips, not a served path, so it runs
+# here, in its own throwaway CPU venv, once, and never again.
+#
+# Setup (from backend/, do NOT run this inside the `red` venv):
+#   python -m venv voice_gen_env
+#   voice_gen_env\Scripts\activate      (or: source voice_gen_env/Scripts/activate in git-bash)
+#   pip install -r requirements-voice-gen.txt
+#   python generate/generate_voice_attacks.py
+#   deactivate
+#   source red/Scripts/activate         (back to the main venv for everything else)
+#
+# torch==2.6.0/torchaudio==2.6.0 are pulled in transitively by chatterbox-tts
+# itself (see its pyproject.toml) -- do not add separate torch lines here,
+# that would fight its own resolution.
+chatterbox-tts
+python-dotenv>=1.0  # loads backend/.env for HF_TOKEN, see generate_voice_attacks.py
+
+# needed by generate_voice_attacks.py's split_policy/scam_script_gen/
+# librispeech_bonafide imports -- lightweight, no version conflicts with
+# chatterbox's pins.
+datasets>=2.20
+soundfile>=0.12

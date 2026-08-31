@@ -1,0 +1,61 @@
+# Deliberately NOT merged into requirements.txt / the main `red` venv.
+#
+# The `red` venv already has torch==2.13.0+cu130 installed for the
+# transaction-model stack. paddlepaddle-gpu bundles its OWN cudnn/cublas
+# DLLs (nvidia-cudnn-cu12, nvidia-cublas-cu12, etc.) which share filenames
+# with torch's own bundled CUDA DLLs (e.g. cudnn_cnn64_9.dll) but are NOT
+# ABI-compatible builds -- when both frameworks' DLL directories are
+# reachable from the same process/venv, Windows' DLL loader can resolve a
+# dependency from the wrong framework's bundle, producing
+# [WinError 127] "The specified procedure could not be found" on the
+# first real inference call (confirmed against a matching report,
+# github.com/PaddlePaddle/PaddleOCR/issues/14904, 2026-08-30 -- reproduced
+# exactly on this machine after installing paddlepaddle-gpu into `red`).
+# Same category of cross-framework Windows DLL conflict as
+# requirements-voice-gen.txt's Chatterbox/torch pivot -- same fix: total
+# isolation, a venv that never installs torch at all, so there is nothing
+# for paddlepaddle-gpu's DLLs to collide with.
+#
+# The CPU paddlepaddle build does NOT have this problem (it ships no CUDA
+# DLLs), which is why the original plan had PaddleOCR living in the main
+# `red` venv -- see requirements.txt's Phase 2 document_fraud comment for
+# the corrected story. Real per-image CPU timing measured 2026-08-30:
+# 373.5s for a single PaddleOCR-VL predict() call on this machine -- CPU
+# is not viable for a 120-image evidence-gate run (~12.5h), which is why
+# GPU is worth this isolation cost.
+#
+# Setup (from backend/, do NOT run this inside the `red` venv):
+#   python -m venv paddleocr_env
+#   paddleocr_env\Scripts\activate      (or: source paddleocr_env/Scripts/activate in git-bash)
+#   pip install -r requirements-paddleocr-gpu.txt
+#   pip install paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+#     (cu126 index requires GPU driver >=550.54.14 -- already confirmed
+#     working on this machine, 2026-08-30: paddle.device.is_compiled_with_cuda()
+#     -> True, paddle.device.cuda.device_count() -> 1, when installed into `red`)
+#   python evaluation/eval_document_consistency.py
+#   deactivate
+#   red\Scripts\activate                (back to the main venv for everything else)
+#
+# Full dependency chain for document_consistency_detector.py +
+# eval_document_consistency.py, verified by reading both files directly
+# (2026-08-30), not guessed: json/re/pathlib/time/sys (stdlib), numpy,
+# scikit-learn (evaluation/metrics.py's compute_binary_metrics), opencv
+# (cv2.QRCodeDetector, imported directly in document_consistency_detector.py),
+# paddleocr[doc-parser] (PaddleOCRVL). No torch, no supabase, no dotenv --
+# this pipeline reads pre-generated local images and writes local
+# metrics.json/EVALUATION_RESULTS.md only.
+numpy>=1.24
+scikit-learn>=1.3
+# Deliberately NOT listing opencv-python here (2026-08-30, corrected after a
+# real crash): paddlex itself pins opencv-contrib-python==4.10.0.84 as a hard
+# dependency across every one of its install extras (confirmed by reading
+# paddlex's own METADATA directly). Adding a second, separate opencv-python
+# requirement here made pip install BOTH packages side by side -- they share
+# the same cv2 native module namespace, and mixing two different builds
+# corrupted the install, surfacing as a nonsensical
+# "OpenCV ... Failed to allocate 4410000 bytes" crash on first real use, not
+# a real memory shortage. document_consistency_detector.py's cv2.QRCodeDetector
+# call is satisfied by opencv-contrib-python alone (it's a superset build) --
+# no separate opencv-python needed, just let paddleocr[doc-parser] pull its
+# own pinned opencv-contrib-python in cleanly.
+paddleocr[doc-parser]>=3.0

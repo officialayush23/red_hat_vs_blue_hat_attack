@@ -1,0 +1,444 @@
+{
+  "xgboost": {
+    "metrics": {
+      "threshold": 0.9825477004051208,
+      "precision": 0.8976504666881235,
+      "recall": 0.4133076467101363,
+      "f1": 0.5660071029934044,
+      "roc_auc": 0.989948809002644,
+      "pr_auc": 0.6020463647351135,
+      "false_positive_rate": 0.00022962659682552062,
+      "n_samples": 1391605,
+      "n_positive": 6748,
+      "true_positives": 2789,
+      "false_positives": 318,
+      "true_negatives": 1384539,
+      "false_negatives": 3959
+    },
+    "decision_threshold": 0.9825477004051208,
+    "n_train": 5566418,
+    "n_val": 1391605
+  },
+  "lightgbm": {
+    "metrics": {
+      "threshold": 0.9813934091626603,
+      "precision": 0.8588588588588588,
+      "recall": 0.42382928275044457,
+      "f1": 0.5675729311371304,
+      "roc_auc": 0.990307589110229,
+      "pr_auc": 0.6066496499654799,
+      "false_positive_rate": 0.00033938522172325373,
+      "n_samples": 1391605,
+      "n_positive": 6748,
+      "true_positives": 2860,
+      "false_positives": 470,
+      "true_negatives": 1384387,
+      "false_negatives": 3888
+    },
+    "decision_threshold": 0.9813934091626603,
+    "n_train": 5566418,
+    "n_val": 1391605
+  },
+  "autoencoder": {
+    "metrics": {
+      "threshold": 0.11958900839090347,
+      "precision": 0.4736170212765957,
+      "recall": 0.16493775933609958,
+      "f1": 0.24466915805671577,
+      "roc_auc": 0.94245002742872,
+      "pr_auc": 0.2150433567156382,
+      "false_positive_rate": 0.0008932330197269465,
+      "n_samples": 1391605,
+      "n_positive": 6748,
+      "true_positives": 1113,
+      "false_positives": 1237,
+      "true_negatives": 1383620,
+      "false_negatives": 5635
+    },
+    "decision_threshold": 0.11958900839090347,
+    "n_train": 5539427,
+    "n_val": 1391605
+  },
+  "voice_spoof_detector": {
+    "metrics": {
+      "threshold": 0.976058840751648,
+      "precision": 0.8933333333333333,
+      "recall": 0.8170731707317073,
+      "f1": 0.8535031847133758,
+      "roc_auc": 0.9094893292682926,
+      "pr_auc": 0.9402506624484471,
+      "false_positive_rate": 0.125,
+      "n_samples": 146,
+      "n_positive": 82,
+      "true_positives": 67,
+      "false_positives": 8,
+      "true_negatives": 56,
+      "false_negatives": 15
+    },
+    "decision_threshold": 0.976058840751648,
+    "n_bonafide": 64,
+    "n_spoof": 82,
+    "held_out_recall": 0.8,
+    "train_recall": 0.8333333333333334,
+    "note": "pretrained inference, no training -- evidence-gate run per Principle 11. Threshold calibrated via best_f1_threshold on bonafide + train-split spoof only (round 2), then applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default."
+  },
+  "document_consistency_detector": {
+    "metrics": {
+      "threshold": 0.25,
+      "precision": 0.8795180722891566,
+      "recall": 0.9125,
+      "f1": 0.8957055214723927,
+      "roc_auc": 0.7968750000000001,
+      "pr_auc": 0.829735870466471,
+      "false_positive_rate": 0.25,
+      "n_samples": 120,
+      "n_positive": 80,
+      "true_positives": 73,
+      "false_positives": 10,
+      "true_negatives": 30,
+      "false_negatives": 7
+    },
+    "decision_threshold": 0.25,
+    "n_bonafide": 40,
+    "n_fraud": 80,
+    "held_out_recall": 1.0,
+    "train_recall": 0.825,
+    "note": "pretrained OCR-VL + our own QR cross-check logic, no training -- evidence-gate run per Principle 11. Run on Google Colab (T4 GPU), not locally -- paddlepaddle-gpu proved unstable across four distinct low-level Windows driver/library errors in a row (DLL collision, cudnn version mismatch, opencv package collision, cudnn execution failure); see docs/FUTURE_INTEGRATIONS.md item 2. Detector and metrics code run unmodified from the repo. Threshold calibrated via best_f1_threshold on bonafide + train-split fraud only (round 2), then applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default, which is why round 1 showed recall=0.7125 vs round 2's 0.9125 at the same false_positive_rate (0.25 both rounds -- the same 10/40 bonafide docs were misflagged either way; the quantized field-mismatch score never put a bonafide doc exactly between 0.25 and 0.5)."
+  },
+  "phishing_classifier": {
+    "metrics": {
+      "threshold": 0.46286237903426386,
+      "precision": 0.947945205479452,
+      "recall": 0.9427792915531336,
+      "f1": 0.9453551912568307,
+      "roc_auc": 0.9933256600582543,
+      "pr_auc": 0.9885281228013226,
+      "false_positive_rate": 0.02620689655172414,
+      "n_samples": 2184,
+      "n_positive": 734,
+      "true_positives": 692,
+      "false_positives": 38,
+      "true_negatives": 1412,
+      "false_negatives": 42
+    },
+    "decision_threshold": 0.46286237903426386,
+    "n_train": 17476,
+    "n_val": 2184,
+    "trained_on": "difraud/difraud phishing + sms domains (real labeled data, MIT license)"
+  },
+  "phishing_classifier_evidence_gate": {
+    "metrics": {
+      "threshold": 0.46286237903426386,
+      "precision": 0.8151658767772512,
+      "recall": 0.86,
+      "f1": 0.8369829683698297,
+      "roc_auc": 0.8334,
+      "pr_auc": 0.9299917103190074,
+      "false_positive_rate": 0.39,
+      "n_samples": 300,
+      "n_positive": 200,
+      "true_positives": 172,
+      "false_positives": 39,
+      "true_negatives": 61,
+      "false_negatives": 28
+    },
+    "n_bonafide": 100,
+    "n_fraud": 200,
+    "per_split_metrics": {
+      "train": {
+        "threshold": 0.46286237903426386,
+        "precision": 0.7194244604316546,
+        "recall": 1.0,
+        "f1": 0.8368200836820083,
+        "roc_auc": 0.9905,
+        "pr_auc": 0.9907543675751225,
+        "false_positive_rate": 0.39,
+        "n_samples": 200,
+        "n_positive": 100,
+        "true_positives": 100,
+        "false_positives": 39,
+        "true_negatives": 61,
+        "false_negatives": 0
+      },
+      "held_out": {
+        "threshold": 0.46286237903426386,
+        "precision": 0.6486486486486487,
+        "recall": 0.72,
+        "f1": 0.6824644549763034,
+        "roc_auc": 0.6763,
+        "pr_auc": 0.7461293518006684,
+        "false_positive_rate": 0.39,
+        "n_samples": 200,
+        "n_positive": 100,
+        "true_positives": 72,
+        "false_positives": 39,
+        "true_negatives": 61,
+        "false_negatives": 28
+      }
+    },
+    "held_out_recall": 0.72,
+    "train_recall": 1.0,
+    "note": "TF-IDF + urgency/actionability/credential/reassurance/URL-shape features + LogisticRegression, trained on real difraud/difraud data (Stage 5), scored here against our own generated phishing_scam artifacts it never trained on -- evidence-gate run per Principle 11."
+  },
+  "xgboost_adversarial_eval": {
+    "metrics": {
+      "threshold": 0.9825477004051208,
+      "precision": 0.9564979480164159,
+      "recall": 0.8712772585669782,
+      "f1": 0.9119008803390936,
+      "roc_auc": 0.9987276322289376,
+      "pr_auc": 0.9261515449107424,
+      "false_positive_rate": 0.00022962659682552062,
+      "n_samples": 1392882,
+      "n_positive": 8025,
+      "true_positives": 6992,
+      "false_positives": 318,
+      "true_negatives": 1384539,
+      "false_negatives": 1033
+    },
+    "n_legit": 1384857,
+    "n_fraud": 8025,
+    "per_family_recall": {
+      "transaction_fraud": 1.0,
+      "account_takeover": 1.0,
+      "synthetic_identity": 0.9133333333333333,
+      "mule_network": 0.7079646017699115
+    },
+    "decision_threshold_reused_from_stage5": 0.9825477004051208,
+    "note": "Section 8 step 4 -- frozen model, held-out combinations it never trained on (evaluation/split_policy.py's held_out_only buckets)."
+  },
+  "lightgbm_adversarial_eval": {
+    "metrics": {
+      "threshold": 0.9813934091626603,
+      "precision": 0.9446733372572101,
+      "recall": 1.0,
+      "f1": 0.9715496368038741,
+      "roc_auc": 1.0,
+      "pr_auc": 1.0,
+      "false_positive_rate": 0.00033938522172325373,
+      "n_samples": 1392882,
+      "n_positive": 8025,
+      "true_positives": 8025,
+      "false_positives": 470,
+      "true_negatives": 1384387,
+      "false_negatives": 0
+    },
+    "n_legit": 1384857,
+    "n_fraud": 8025,
+    "per_family_recall": {
+      "transaction_fraud": 1.0,
+      "account_takeover": 1.0,
+      "synthetic_identity": 1.0,
+      "mule_network": 1.0
+    },
+    "decision_threshold_reused_from_stage5": 0.9813934091626603,
+    "note": "Section 8 step 4 -- frozen model, held-out combinations it never trained on (evaluation/split_policy.py's held_out_only buckets)."
+  },
+  "autoencoder_adversarial_eval": {
+    "metrics": {
+      "threshold": 0.11958900839090347,
+      "precision": 0.8416943946762222,
+      "recall": 0.8195638629283489,
+      "f1": 0.8304817223309552,
+      "roc_auc": 0.9991216222765665,
+      "pr_auc": 0.916639401155352,
+      "false_positive_rate": 0.0008932330197269465,
+      "n_samples": 1392882,
+      "n_positive": 8025,
+      "true_positives": 6577,
+      "false_positives": 1237,
+      "true_negatives": 1383620,
+      "false_negatives": 1448
+    },
+    "n_legit": 1384857,
+    "n_fraud": 8025,
+    "per_family_recall": {
+      "transaction_fraud": 0.43,
+      "account_takeover": 0.5225,
+      "synthetic_identity": 1.0,
+      "mule_network": 1.0
+    },
+    "decision_threshold_reused_from_stage5": 0.11958900839090347,
+    "note": "Section 8 step 4 -- frozen model, held-out combinations it never trained on (evaluation/split_policy.py's held_out_only buckets)."
+  },
+  "fusion_adversarial_eval": {
+    "metrics": {
+      "threshold": 0.6756013316780785,
+      "precision": 0.9621148543340127,
+      "recall": 1.0,
+      "f1": 0.9806916778687523,
+      "roc_auc": 0.9999972637727295,
+      "pr_auc": 0.9993510553608084,
+      "false_positive_rate": 0.0002281824043926557,
+      "n_samples": 1392882,
+      "n_positive": 8025,
+      "true_positives": 8025,
+      "false_positives": 316,
+      "true_negatives": 1384541,
+      "false_negatives": 0
+    },
+    "weights": {
+      "xgboost": 0.3387096289765748,
+      "lightgbm": 0.33883238509893093,
+      "autoencoder": 0.32245798592449426
+    },
+    "threshold_source": "Stage-5 validation fused scores (best_f1_threshold), not held-out data",
+    "n_legit": 1384857,
+    "n_fraud": 8025,
+    "per_family_recall": {
+      "transaction_fraud": 1.0,
+      "account_takeover": 1.0,
+      "synthetic_identity": 1.0,
+      "mule_network": 1.0
+    },
+    "note": "Section 6 evidence gate -- weighted XGBoost+LightGBM+Autoencoder fusion, same held-out set as the individual *_adversarial_eval entries, for direct comparison."
+  },
+  "autoencoder_weakness_round2_transaction_fraud": {
+    "metrics": {
+      "threshold": 0.11958900839090347,
+      "precision": 0.2820661636680209,
+      "recall": 0.405,
+      "f1": 0.3325350667122819,
+      "roc_auc": 0.996578214393255,
+      "pr_auc": 0.1809152036477466,
+      "false_positive_rate": 0.0008932330197269465,
+      "n_samples": 1386057,
+      "n_positive": 1200,
+      "true_positives": 486,
+      "false_positives": 1237,
+      "true_negatives": 1383620,
+      "false_negatives": 714
+    },
+    "before_recall": 0.43,
+    "after_recall": 0.405,
+    "delta": -0.024999999999999967,
+    "original_combo": {
+      "amount": "mid",
+      "velocity": "moderate",
+      "merchant_category": "new",
+      "time_of_day": "off_hours"
+    },
+    "hardened_combo": {
+      "amount": "low",
+      "merchant_category": "new",
+      "time_of_day": "business_hours",
+      "velocity": "moderate"
+    },
+    "reasons": [
+      "The autoencoder's low recall (0.43) on off-hours mid-amount transactions indicates it relies on strong distribution drift to generate high reconstruction error.",
+      "Masking the transaction within standard business hours and lowering the amount reduces its baseline anomaly score, directly targeting the autoencoder's tendency to treat low-value daytime events as benign."
+    ],
+    "note": "Section 8 step 6 -- targeted second round on the weakest signal found in step 5."
+  },
+  "gnn_colab_round4_reported": {
+    "metrics": {
+      "roc_auc": 0.5669425279544967,
+      "pr_auc": 0.0025588111619002938,
+      "precision": 0.03686635944700461,
+      "recall": 0.004451864218141347,
+      "f1": 0.007944389275074478,
+      "fpr": 0.00020614042009247716,
+      "n_test_edges": 1015669,
+      "n_test_laundering": 1797
+    },
+    "decision_threshold": 0.7979746460914612,
+    "n_train": 3554841,
+    "n_val": 507835,
+    "trained_on": "IBM Transactions for Anti-Money Laundering (AML), HI-Small (Kaggle ealtman2019/ibm-transactions-for-anti-money-laundering-aml)",
+    "architecture": "2-layer directional GraphSAGE encoder (separate in/out neighbor aggregation, dropout) + MLP edge classifier -- round 4: real graph-topology + temporal/velocity + both-direction port-numbering features, adopting reverse message passing and port numbering from Egressy et al. AAAI 2024 (arXiv:2306.11586), the published methodology for this exact dataset",
+    "trained_at": "2026-08-31T07:07:37.594317+00:00",
+    "published_baselines_for_comparison": {
+      "source": "Altman, Egressy et al., NeurIPS 2023 Datasets & Benchmarks, arXiv:2306.16424, Table 2 (HI-Small minority-class F1)",
+      "GIN": 0.287,
+      "GIN_plus_edge_updates": 0.4773,
+      "PNA": 0.5677,
+      "graph_features_plus_XGBoost": 0.6323
+    },
+    "_note": "This is the Colab run's OWN self-reported number, saved here verbatim for the record (source: gnn_metrics_snippet.json, notebooks/train_gnn_mule_network.ipynb, round 4). Not yet independently re-verified locally -- run backend/evaluation/eval_gnn.py after placing the matching backend/defend/models/gnn.pt to get a second, independent check (docs/EVALUATION_RESULTS.md's own convention: one Colab printout alone is not evidence, two independent runs converging on the same number is)."
+  },
+  "gnn_adversarial_eval_colab_round4_reported": {
+    "metrics": {
+      "recall": 0.0
+    },
+    "n_legit": 0,
+    "n_fraud": 400,
+    "per_family_recall": {
+      "mule_network": 0.0
+    },
+    "decision_threshold_reused_from_stage5": 0.7979746460914612,
+    "percentile_vs_ibm_aml_test_scores": 0.9792788595497156,
+    "note": "mule_network held-out recall, real ring_gen.py-generated graphs pulled live from Supabase attack_cases, scored by the frozen GNN trained above on IBM AML, using ONLY features genuinely present in both domains (round 4 -- see docs/DATASETS.md). No legitimate/negative mule_network graphs were available for a case-level FPR here -- FPR is measured instead on IBM AML's own real held-out legitimate transactions (ibm_aml_metrics.fpr above). percentile_vs_ibm_aml_test_scores is a second, threshold-independent cross-domain check: the average fraction of real IBM AML test transactions a mule_network case outscores."
+  },
+  "gnn_adversarial_eval_local_reverify": {
+    "metrics": {
+      "recall": 0.002362204724409449,
+      "threshold": 0.822209894657135,
+      "n_cases": 1270
+    },
+    "note": "Local, independent re-run of the Colab-reported gnn_adversarial_eval recall -- see docs/DATASETS.md. Compare this number against gnn_adversarial_eval (from the Colab notebook) before trusting either one alone."
+  },
+  "gnn_colab_round5_reported": {
+    "metrics": {
+      "roc_auc": 0.7531878963114933,
+      "pr_auc": 0.006906539742363563,
+      "precision": 0.015614075972966674,
+      "recall": 0.07456872565386756,
+      "f1": 0.025821370074188266,
+      "fpr": 0.008332412770053813,
+      "n_test_edges": 1015669,
+      "n_test_laundering": 1797
+    },
+    "decision_threshold": 0.822209894657135,
+    "n_train": 3554841,
+    "n_val": 507835,
+    "trained_on": "IBM Transactions for Anti-Money Laundering (AML), HI-Small (Kaggle ealtman2019/ibm-transactions-for-anti-money-laundering-aml)",
+    "architecture": "2-layer directional GraphSAGE encoder (separate in/out neighbor aggregation, dropout) + MLP edge classifier -- round 4: real graph-topology + temporal/velocity + both-direction port-numbering features, adopting reverse message passing and port numbering from Egressy et al. AAAI 2024 (arXiv:2306.11586), the published methodology for this exact dataset -- round 5 adds z-score feature normalization (train-period stats) on top of round 4's features/architecture",
+    "trained_at": "2026-08-31T09:45:11.157171+00:00",
+    "published_baselines_for_comparison": {
+      "source": "Altman, Egressy et al., NeurIPS 2023 Datasets & Benchmarks, arXiv:2306.16424, Table 2 (HI-Small minority-class F1)",
+      "GIN": 0.287,
+      "GIN_plus_edge_updates": 0.4773,
+      "PNA": 0.5677,
+      "graph_features_plus_XGBoost": 0.6323
+    },
+    "_note": "This is the Colab run's OWN self-reported number, saved here verbatim for the record (source: gnn_metrics_snippet.json, notebooks/train_gnn_mule_network.ipynb, round 5 -- adds train-period z-score feature normalization on top of round 4's architecture/features). Not yet independently re-verified locally -- run backend/evaluation/eval_gnn.py after placing the matching gnn.pt to get a second, independent check."
+  },
+  "gnn_adversarial_eval_colab_round5_reported": {
+    "metrics": {
+      "recall": 0.001
+    },
+    "n_legit": 0,
+    "n_fraud": 1000,
+    "per_family_recall": {
+      "mule_network": 0.001
+    },
+    "decision_threshold_reused_from_stage5": 0.822209894657135,
+    "percentile_vs_ibm_aml_test_scores": 0.9756737618259492,
+    "note": "mule_network held-out recall, real ring_gen.py-generated graphs pulled live from Supabase attack_cases, scored by the frozen GNN trained above on IBM AML, using ONLY features genuinely present in both domains (round 4 -- see docs/DATASETS.md). No legitimate/negative mule_network graphs were available for a case-level FPR here -- FPR is measured instead on IBM AML's own real held-out legitimate transactions (ibm_aml_metrics.fpr above). percentile_vs_ibm_aml_test_scores is a second, threshold-independent cross-domain check: the average fraction of real IBM AML test transactions a mule_network case outscores."
+  },
+  "video_kyc_detector": {
+    "metrics": {
+      "threshold": 0.6373924724757671,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "roc_auc": 1.0,
+      "pr_auc": 1.0,
+      "false_positive_rate": 0.0,
+      "n_samples": 6,
+      "n_positive": 3,
+      "true_positives": 3,
+      "false_positives": 0,
+      "true_negatives": 3,
+      "false_negatives": 0
+    },
+    "decision_threshold": 0.6373924724757671,
+    "threshold_calibrated": true,
+    "n_cases": 6,
+    "n_bonafide": 3,
+    "n_fraud": 3,
+    "held_out_recall": 1.0,
+    "train_recall": 1.0,
+    "note": "pretrained face-embedding inference (facenet-pytorch, MTCNN+InceptionResnetV1/VGGFace2), no training -- evidence-gate run per Principle 11. Dataset is incrementally generated (see generate_video_kyc_attacks.py); this run's n_cases reflects the media available at run time, not a final fixed set. Threshold calibrated via best_f1_threshold on train-split cases only."
+  }
+}

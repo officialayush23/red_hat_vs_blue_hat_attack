@@ -1,0 +1,61 @@
+# FraudShield backend -- Blue Team training & pipeline dependencies.
+# torch and torch-geometric are installed separately (see docs/TRAINING_SETUP.md) --
+# they need CUDA-specific wheels, plain pip here would give you a CPU-only build.
+
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+scipy>=1.11
+joblib>=1.3
+requests>=2.31
+xgboost>=2.0
+lightgbm>=4.0
+networkx>=3.0
+kaggle>=1.6
+python-dotenv>=1.0
+pyarrow>=14.0
+jupyter>=1.0
+
+# Supabase (Phase 1.5 -- DB, Realtime, Storage; see backend/db/README.md)
+supabase>=2.9
+
+# API layer (Section 7 -- FastAPI, not Node/serverless)
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.9
+
+# Phase 2 -- voice_scam DETECTION only (scoring already-generated audio
+# with the pretrained wav2vec2 spoof detector, defend/pretrained/voice_spoof_detector.py).
+# GENERATION (Chatterbox voice cloning) deliberately does NOT live here --
+# it runs in its own throwaway venv, see requirements-voice-gen.txt for why
+# (XTTS-v2/coqui-tts hit an unresolved native segfault on this environment's
+# torch 2.13.0+cu130; Chatterbox's own pins would conflict with that same
+# torch install if installed in this venv instead).
+transformers>=4.44
+librosa>=0.10
+soundfile>=0.12
+
+# Phase 2 -- document_fraud generation only (Pillow/qrcode, lightweight).
+# Detection (PaddleOCR-VL + QR cross-check,
+# defend/pretrained/document_consistency_detector.py) does NOT live in this
+# venv -- see requirements-paddleocr-gpu.txt for the full story and setup.
+# It originally did: the CPU paddlepaddle build genuinely doesn't conflict
+# with torch (it ships no CUDA DLLs at all). Switching to paddlepaddle-gpu
+# for real inference speed (2026-08-30 -- CPU measured at 373.5s/image,
+# not viable for a 120-image evidence-gate run) DOES conflict: it bundles
+# its own cudnn/cublas DLLs that collide by filename with torch's bundled
+# ones, producing [WinError 127] on Windows when both are importable in
+# the same venv. Moved to full isolation, same pattern as
+# requirements-voice-gen.txt.
+Pillow>=10.0
+qrcode>=7.4
+
+# evaluation/llm_strategist.py (Task #35). google-generativeai (the old
+# SDK) was tried first and dropped -- deprecated, and its
+# grpc/protobuf/google-api-python-client dependency chain (~16MB) is what
+# actually failed mid-install with a Windows file-lock error. google-genai
+# is the current official SDK and much lighter (no grpc/protobuf). If this
+# install ever fails again, llm_strategist.py still works with no
+# additional install: it falls back to a direct REST call over `requests`
+# (already a dependency above).
+google-genai>=1.0.0

@@ -1,0 +1,33 @@
+# Never ship real historical/generated data or secrets in the image --
+# Railway sets SUPABASE_* / CORS_ALLOWED_ORIGINS as real env vars at
+# runtime (db/supabase_client.py reads os.environ directly), so none of
+# this needs to be in the build context at all.
+.env
+.env.local
+kaggle.json
+
+# The two isolated venvs -- not used by this image (see Dockerfile's top
+# comment), and each is easily several GB (paddlepaddle / a separate torch
+# stack). Including them would make every `railway up` upload huge and slow
+# for no benefit.
+red/
+paddleocr_env/
+voice_gen_env/
+.venv/
+
+# Large/gitignored data dirs -- never needed to build the API image itself
+# (data/ lives one level up at the repo root, outside this build context
+# entirely; listed here only as a safety net in case the build is ever
+# pointed at the repo root instead of backend/). Generated at runtime by
+# the scripts this API launches.
+data/
+__pycache__/
+**/__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Editor/OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
