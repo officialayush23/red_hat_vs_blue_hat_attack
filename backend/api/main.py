@@ -66,6 +66,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 EVAL_SCRIPT = BACKEND_DIR / "evaluation" / "run_all_evaluations.py"
 GEN_SCRIPT = BACKEND_DIR / "generate" / "run_all_generation.py"
 ORCH_SCRIPT = BACKEND_DIR / "orchestration" / "agent_runner.py"
+STORAGE_SYNC_SCRIPT = BACKEND_DIR / "tools" / "storage_sync.py"
+GENERATED_DIR = BACKEND_DIR.parent / "data" / "generated"
 METRICS_JSON = BACKEND_DIR / "defend" / "models" / "metrics.json"
 JSON_START, JSON_END = "===JSON_SUMMARY_START===", "===JSON_SUMMARY_END==="
 
@@ -108,6 +110,7 @@ app.add_middleware(
 _eval_runs: dict = {}
 _gen_runs: dict = {}
 _orch_runs: dict = {}
+_hydrate_runs: dict = {}
 
 
 class RunRequest(BaseModel):
@@ -120,6 +123,11 @@ class StartAgentRunRequest(BaseModel):
     severity: str = "adaptive"
     scenario_count: int = 200
     seed: int = 42
+
+
+class HydrateRequest(BaseModel):
+    only: Optional[str] = None   # comma-separated bundle names; omit for everything
+    force: bool = False          # re-download even when the local sha already matches
 
 
 class GenerateRunRequest(BaseModel):
@@ -350,6 +358,136 @@ async def get_run_process_status(run_id: str):
     state = _orch_runs.get(run_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"No agent run with id {run_id}")
+    return state
+
+
+@app.get("/")
+async def root():
+    """Service index.
+
+    FastAPI defines no route for "/", so opening the deployment's bare URL
+    returned {"detail":"Not Found"} -- which reads as a dead service even
+    though /health was answering fine the whole time. Anyone checking
+    whether the backend is up types the bare hostname first, so this route
+    exists to answer that question directly and list what is actually
+    available here."""
+    return {
+        "service": app.title,
+        "version": app.version,
+        "status": "ok",
+        "docs": "/docs",
+        "endpoints": {
+            "health": "GET /health",
+            "latest_metrics": "GET /evaluations/latest",
+            "start_evaluation": "POST /evaluations/run",
+            "evaluation_status": "GET /evaluations/status/{run_id}",
+            "start_generation": "POST /generate/run",
+            "generation_status": "GET /generate/status/{run_id}",
+            "start_agent_run": "POST /runs/start",
+            "agent_run_process_status": "GET /runs/{run_id}/process-status",
+            "data_status": "GET /data/status",
+            "hydrate_data": "POST /data/hydrate",
+        },
+        "note": (
+            "Reads (attack cases, evaluation results, model registry, campaign runs) do not go "
+            "through this API -- the frontend queries Supabase directly with the anon key under "
+            "public-read RLS. This API exists for the things a browser cannot do: launching and "
+            "polling long-running Python subprocesses."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dataset hydration
+# ---------------------------------------------------------------------------
+#
+# data/generated/ is gitignored (236 MB, regenerable), so an image built
+# from this repo ships without it. A run launched against such a container
+# completes in seconds and honestly reports "Generation had failures" /
+# "attacksTested: 0" -- structurally correct and completely empty
+# (confirmed against the live Railway deployment on 2026-08-31).
+#
+# These two endpoints make that state visible and fixable from outside:
+# GET /data/status says what this particular instance actually has on
+# disk, and POST /data/hydrate pulls the bundles from Supabase Storage
+# (backend/tools/storage_sync.py). The frontend reads the first one so it
+# can refuse to offer a Start button that would produce an empty run,
+# instead of letting someone click it and find out afterwards.
+
+@app.get("/data/status")
+async def data_status():
+    """What generated data does THIS instance have? Cheap, no network --
+    a directory scan, so it can be polled on page load."""
+    bundles = {}
+    if GENERATED_DIR.exists():
+        for entry in sorted(GENERATED_DIR.iterdir()):
+            if not entry.is_dir():
+                continue
+            files = [p for p in entry.rglob("*") if p.is_file() and p.name != ".storage_bundle.json"]
+            marker = entry / ".storage_bundle.json"
+            bundles[entry.name] = {
+                "files": len(files),
+                "bytes": sum(p.stat().st_size for p in files),
+                "hydratedFromStorage": marker.exists(),
+            }
+    total_files = sum(b["files"] for b in bundles.values())
+    return {
+        "generatedDir": str(GENERATED_DIR),
+        "exists": GENERATED_DIR.exists(),
+        "bundles": bundles,
+        "totalFiles": total_files,
+        # The honest headline the UI keys off: can this instance run the
+        # generation/evaluation pipeline over real cases at all?
+        "canRunPipeline": total_files > 0,
+    }
+
+
+@app.post("/data/hydrate", status_code=202)
+async def hydrate_data(req: HydrateRequest = HydrateRequest()):
+    """Pull dataset bundles from Supabase Storage into data/generated/ on
+    this instance. Long-running (hundreds of MB), so it launches in the
+    background and returns a run_id to poll, same contract as the other
+    job endpoints here."""
+    run_id = uuid.uuid4().hex[:12]
+    _hydrate_runs[run_id] = {
+        "run_id": run_id, "job": "hydrate", "status": "queued", "started_at": time.time(),
+        "finished_at": None, "only": req.only, "summary": None,
+    }
+    extra_args = ["pull"]
+    if req.only:
+        extra_args += ["--only", req.only]
+    if req.force:
+        extra_args.append("--force")
+
+    async def _run():
+        state = _hydrate_runs[run_id]
+        state["status"] = "running"
+        try:
+            proc = await asyncio.to_thread(
+                _spawn, [sys.executable, str(STORAGE_SYNC_SCRIPT), *extra_args], str(BACKEND_DIR)
+            )
+        except Exception as exc:
+            state["status"] = "failed_to_launch"
+            state["error"] = repr(exc)
+            state["finished_at"] = time.time()
+            return
+        state["pid"] = proc.pid
+        stdout, stderr = await asyncio.to_thread(proc.communicate)
+        state["finished_at"] = time.time()
+        state["returncode"] = proc.returncode
+        state["log_tail"] = "\n".join(stdout.decode(errors="replace").splitlines()[-40:])
+        state["stderr_tail"] = "\n".join(stderr.decode(errors="replace").splitlines()[-40:])
+        state["status"] = "completed" if proc.returncode == 0 else "completed_with_failures"
+
+    asyncio.create_task(_run())
+    return {"run_id": run_id, "status": "queued"}
+
+
+@app.get("/data/hydrate/status/{run_id}")
+async def hydrate_status(run_id: str):
+    state = _hydrate_runs.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"No hydrate run with id {run_id}")
     return state
 
 

@@ -10,6 +10,7 @@ export function SeverityBadge({
   severity,
   className
 }) {
+  if (!severity || severity === "none") return null;
   return <Badge variant="outline" className={cn("border-transparent capitalize", SEVERITY_STYLE[severity], className)}>
       {severity}
     </Badge>;
@@ -28,10 +29,16 @@ const STATUS_STYLE = {
     className: "bg-muted text-muted-foreground"
   }
 };
+// Every lookup below falls back instead of destructuring undefined. These
+// badges crashed the whole route (react-router error boundary, "Cannot read
+// properties of undefined (reading 'className')") the moment a page passed a
+// value outside the hardcoded map -- which is exactly what happens when the
+// data layer moves onto real backend values. A badge is decoration; it must
+// never be able to take a page down.
 export function AttackStatusBadge({
   status
 }) {
-  const s = STATUS_STYLE[status];
+  const s = STATUS_STYLE[status] ?? { label: status ?? "unknown", className: "bg-muted text-muted-foreground" };
   return <Badge variant="outline" className={cn("border-transparent", s.className)}>
       {s.label}
     </Badge>;
@@ -57,7 +64,7 @@ const RUN_STATUS_STYLE = {
 export function RunStatusBadge({
   status
 }) {
-  const s = RUN_STATUS_STYLE[status];
+  const s = RUN_STATUS_STYLE[status] ?? { label: status ?? "unknown", className: "bg-muted text-muted-foreground" };
   return <Badge variant="outline" className={cn("border-transparent", s.className)}>
       {s.label}
     </Badge>;
@@ -70,8 +77,8 @@ const DECISION_STYLE = {
 export function DecisionBadge({
   decision
 }) {
-  return <Badge variant="outline" className={cn("border-transparent uppercase", DECISION_STYLE[decision])}>
-      {decision}
+  return <Badge variant="outline" className={cn("border-transparent uppercase", DECISION_STYLE[decision] ?? "bg-muted text-muted-foreground")}>
+      {decision ?? "—"}
     </Badge>;
 }
 const DIFFICULTY_LABEL = {
@@ -84,6 +91,6 @@ export function DifficultyBadge({
   difficulty
 }) {
   return <Badge variant="outline" className="border-border text-foreground">
-      {DIFFICULTY_LABEL[difficulty]}
+      {DIFFICULTY_LABEL[difficulty] ?? difficulty ?? "—"}
     </Badge>;
 }

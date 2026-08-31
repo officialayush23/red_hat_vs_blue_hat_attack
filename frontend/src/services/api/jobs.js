@@ -166,6 +166,29 @@ export async function getRunProcessStatus(runId) {
   return apiGet(`/runs/${runId}/process-status`);
 }
 
+// ---- Dataset hydration ---------------------------------------------------
+
+// GET /data/status -- what generated data the backend instance we're
+// talking to actually has on disk. This matters because the Railway image
+// is built from the repo, and data/generated/ is gitignored: a run
+// launched against a container that has never been hydrated completes in
+// seconds and reports attacksTested: 0. Reading this lets the UI say so
+// BEFORE someone clicks Start, instead of after.
+export async function getDataStatus() {
+  return apiGet("/data/status");
+}
+
+// POST /data/hydrate -- pull the dataset bundles from Supabase Storage
+// into that instance (backend/tools/storage_sync.py). Hundreds of MB, so
+// it returns a run_id to poll rather than blocking.
+export async function startHydrate(opts) {
+  return apiPost("/data/hydrate", opts ?? {});
+}
+
+export async function getHydrateStatus(runId) {
+  return apiGet(`/data/hydrate/status/${runId}`);
+}
+
 // ---- Health -------------------------------------------------------------
 
 export async function checkApiHealth() {

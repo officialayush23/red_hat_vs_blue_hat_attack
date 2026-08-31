@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { useCreateRun, useRuns } from "@/hooks/useRuns";
 import { useApiMode } from "@/hooks/useApiMode";
+import { useDataStatus, useHydrate } from "@/hooks/useDataStatus";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { RadioIcon, TriangleAlertIcon } from "lucide-react";
+import { DatabaseIcon, LoaderCircleIcon, RadioIcon, TriangleAlertIcon } from "lucide-react";
 import { ATTACK_CATEGORY_LABEL } from "@/types";
 const SCOPE_OPTIONS = Object.entries(ATTACK_CATEGORY_LABEL);
 const SCENARIO_COUNTS = [100, 500, 1000, 10000];
@@ -20,6 +21,15 @@ export function CreateRunPage() {
   const createRun = useCreateRun();
   const api = useApiMode();
   const { data: runs } = useRuns();
+  const { data: dataStatus } = useDataStatus(api.live);
+  const hydrate = useHydrate();
+  // A reachable backend is not enough: the Railway image is built from the
+  // repo and data/generated/ is gitignored, so a container that has never
+  // been hydrated runs the whole 7-stage pipeline over zero cases and
+  // finishes in seconds. Offering Start in that state produces a real-
+  // looking run with attacksTested: 0, which is worse than refusing.
+  const hasData = dataStatus ? dataStatus.canRunPipeline : true;
+  const canStart = api.live && hasData;
   const [scope, setScope] = useState(["transaction", "behavioral", "graph"]);
   const [severity, setSeverity] = useState("adaptive");
   const [scenarioCount, setScenarioCount] = useState(1000);
@@ -65,13 +75,61 @@ export function CreateRunPage() {
         </Alert>
       )}
 
-      {api.live && (
+      {api.live && hasData && (
         <Alert>
           <RadioIcon className="size-4" />
           <AlertTitle>Backend live</AlertTitle>
           <AlertDescription>
-            Connected to <code className="font-mono text-xs">{api.apiBase}</code>. Starting a run will launch a real
-            7-stage agent pipeline against this project&apos;s actual generators and detectors.
+            Connected to <code className="font-mono text-xs">{api.apiBase}</code>
+            {dataStatus ? <> · {dataStatus.totalFiles.toLocaleString()} generated case files on that instance</> : null}.
+            Starting a run will launch a real 7-stage agent pipeline against this project&apos;s actual generators and
+            detectors.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {api.live && !hasData && (
+        <Alert>
+          <DatabaseIcon className="size-4" />
+          <AlertTitle>This backend has no generated data yet</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>
+              <code className="font-mono text-xs">{api.apiBase}</code> is reachable and healthy, but its
+              <code className="mx-1 font-mono text-xs">data/generated/</code> directory is empty — the container image is
+              built from the repo, and that directory is gitignored (236&nbsp;MB of regenerable cases, audio and
+              invoices). A run started now would execute all 7 stages, report &ldquo;Generation had failures&rdquo;, and
+              finish with <strong>0 attacks tested</strong>. Rather than let that happen, Start is disabled.
+            </p>
+            <p>
+              Pull the dataset bundles from Supabase Storage into that instance — a few hundred MB, so it takes a few
+              minutes.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => hydrate.mutate({})} disabled={hydrate.isPending}>
+                {hydrate.isPending ? (
+                  <>
+                    <LoaderCircleIcon className="size-4 animate-spin" /> Hydrating…
+                  </>
+                ) : (
+                  <>Hydrate this instance</>
+                )}
+              </Button>
+              {latestCompleted && (
+                <Button variant="outline" size="sm" onClick={() => navigate(`/runs/${latestCompleted.id}/live`)}>
+                  Open the last real run instead
+                </Button>
+              )}
+            </div>
+            {hydrate.isError && (
+              <p className="font-mono text-xs break-words text-destructive">
+                {hydrate.error?.message ?? String(hydrate.error)}
+              </p>
+            )}
+            {hydrate.data && (
+              <pre className="max-h-40 overflow-auto rounded-xl bg-muted/60 p-2 font-mono text-[10px] whitespace-pre-wrap">
+                {hydrate.data.log_tail || hydrate.data.stderr_tail || hydrate.data.status}
+              </pre>
+            )}
           </AlertDescription>
         </Alert>
       )}
@@ -143,7 +201,7 @@ export function CreateRunPage() {
         <p className="text-xs text-muted-foreground">
           {scope.length} scope{scope.length === 1 ? "" : "s"} selected · {scenarioCount.toLocaleString()} scenarios
         </p>
-        <Button size="lg" disabled={scope.length === 0 || createRun.isPending || !api.live} onClick={handleSubmit}>
+        <Button size="lg" disabled={scope.length === 0 || createRun.isPending || !canStart} onClick={handleSubmit}>
           {createRun.isPending ? "Starting…" : "Start Adversarial Evaluation"}
         </Button>
       </div>

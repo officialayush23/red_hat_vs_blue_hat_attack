@@ -86,31 +86,32 @@ function EvaluationPipeline({
       <PipelineArrow label="Per-modality model signals" />
 
       <div className="grid gap-3 sm:grid-cols-2">
+        {/* No Triggered / Below-threshold badge here any more. The old mock
+            invented both the score and the threshold it was compared
+            against; real evaluation_results rows carry each detector's raw
+            score but not its per-model decision threshold (only the fused
+            decision is persisted), so there is no honest way to state
+            whether an individual model fired. The real score is shown on
+            its own. */}
         {evalCase.modelSignals.map(s => {
-        const Icon = MODALITY_ICON[s.modality];
+        const Icon = MODALITY_ICON[evalCase.category] ?? MODALITY_ICON.transaction;
         return <Card key={s.model}>
               <CardContent className="space-y-2 py-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <div className="flex size-7 shrink-0 items-center justify-center rounded-xl bg-muted">
-                      <Icon className="size-3.5 text-muted-foreground" />
+                      {Icon ? <Icon className="size-3.5 text-muted-foreground" /> : null}
                     </div>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-foreground">{s.model}</p>
-                      <p className="text-[11px] text-muted-foreground">{MODALITY_LABEL[s.modality]}</p>
+                      <p className="text-[11px] text-muted-foreground">{MODALITY_LABEL[evalCase.category] ?? evalCase.attackName}</p>
                     </div>
                   </div>
-                  <Badge variant="outline" className={cn("shrink-0 border-transparent", s.triggered ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground")}>
-                    {s.triggered ? "Triggered" : "Below threshold"}
-                  </Badge>
-                </div>
-                <Progress value={s.score * 100} />
-                <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="text-muted-foreground">{s.note}</span>
                   <span className="shrink-0 font-medium tabular-nums text-foreground">
-                    {(s.score * 100).toFixed(0)}%
+                    {s.score === null || s.score === undefined ? "—" : s.score.toFixed(3)}
                   </span>
                 </div>
+                <Progress value={s.score === null || s.score === undefined ? 0 : Math.min(100, s.score * 100)} />
               </CardContent>
             </Card>;
       })}
@@ -132,7 +133,8 @@ function EvaluationPipeline({
           <div className="flex flex-col items-center gap-2 sm:items-end">
             <DecisionBadge decision={evalCase.decision} />
             <p className="text-xs text-muted-foreground">
-              {evalCase.detected ? "Correctly identified as fraud" : "Passed through as legitimate"}
+              {evalCase.outcomeLabel ?? (evalCase.detected ? "Scored correctly" : "Scored incorrectly")}
+              {evalCase.actualLabel ? ` — ground truth: ${evalCase.actualLabel}` : ""}
             </p>
           </div>
         </CardContent>

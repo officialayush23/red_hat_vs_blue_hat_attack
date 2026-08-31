@@ -1,19 +1,47 @@
-import { getEvaluationCases } from "@/data/mockStore";
-import { mockDelay } from "@/services/api/client";
 import { supabase } from "@/lib/supabaseClient";
 import { getRun } from "@/services/api/runs";
+import { listScoredCases, OUTCOME_META, outcomeOf } from "@/services/api/liveCases";
 
 // GET /api/evaluations/:runId/cases
 //
-// Still mock: a real per-case, per-model-signal breakdown (which detector
-// scored this exact case, at what confidence) has no computed source yet —
-// agent_runner.py's real subprocesses write aggregate metrics.json numbers
-// and Supabase's attack_cases/evaluation_results rows, not a joined
-// per-case view shaped for this card. Documented gap, not silently faked;
-// see AttackSchematic/AttackSimulationCanvas, the only real consumers.
+// Real scored cases from Supabase (services/api/liveCases.js), mapped onto
+// the field names the evaluation and schematic views already use.
+//
+// Was: mockStore.js's getEvaluationCases(), a seeded-random generator that
+// invented the attack name, every model signal, whether each signal
+// "triggered", and the fused risk score for every case shown.
+//
+// One field deliberately does NOT survive the move: `triggered`. The old
+// mock decided per-signal triggered/not by comparing its own invented score
+// to an invented threshold. Real per-detector decision thresholds are not
+// carried on evaluation_results rows (only the fused decision is), so there
+// is no honest way to say whether an individual model fired. The real score
+// is shown instead, and consumers must not render a triggered/below-
+// threshold verdict they cannot support.
 export async function listEvaluationCases(runId, limit = 12) {
-  return mockDelay(getEvaluationCases(runId, limit));
+  const rows = await listScoredCases(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    runId,
+    caseId: r.caseId,
+    attackFamilyId: r.family,
+    attackName: r.familyLabel,
+    category: r.category,
+    modelSignals: r.modelSignals.map((sig) => ({ model: sig.model, score: sig.score })),
+    // Consumers render this as a percentage (x * 100); fused_risk_score is
+    // persisted 0-100, so it is normalised here rather than at each call site.
+    fusedRiskScore: r.riskScore / 100,
+    decision: r.decision,
+    evidence: r.evidence,
+    actualLabel: r.actualLabel,
+    detected: r.detected,
+    outcome: r.outcome,
+    outcomeLabel: OUTCOME_META[r.outcome].label,
+    splitPortion: r.splitPortion,
+  }));
 }
+
+export { outcomeOf };
 
 // GET /api/evaluations/:runId/weaknesses — real weakness cards written by
 // agent_runner.py's evaluation-agent stage (RunTracker.update_meta ->

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { getAttack, getAttackCases, getRepresentativeCase, listAttacks } from "@/services/api/attacks";
+import { getAttack, getAttackCases, getGeneratedCombinations, getRepresentativeCase, listAttacks } from "@/services/api/attacks";
 export function useAttacks() {
   return useQuery({
     queryKey: ["attacks"],
@@ -24,5 +24,12 @@ export function useRepresentativeCase(attackId) {
     queryKey: ["representative-case", attackId],
     queryFn: () => getRepresentativeCase(attackId),
     enabled: !!attackId
+  });
+}
+export function useGeneratedCombinations(family) {
+  return useQuery({
+    queryKey: ["generated-combinations", family],
+    queryFn: () => getGeneratedCombinations(family),
+    enabled: !!family
   });
 }
