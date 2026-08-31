@@ -183,3 +183,99 @@
   93% { left: 96%; opacity: 1; transform: translateY(-50%) scale(1.9); }
   100% { left: 97%; opacity: 0; transform: translateY(-50%) scale(0.6); }
 }
+
+/* ---------------------------------------------------------------------------
+   War-room attack stream.
+
+   Four keyframe tracks, one per real outcome of a scored case (see
+   services/api/liveCases.js's outcomeOf): a real attack blocked at the
+   Blue Team boundary, a real attack that slipped through to the system, a
+   legitimate case correctly cleared, and a legitimate case wrongly
+   blocked (a real false positive -- customer friction, and the number the
+   old two-colour canvas hid completely).
+
+   Everything is a compositor-friendly opacity/transform change on top of
+   the single `left` interpolation, and every dot is `will-change`-hinted,
+   so ~60 simultaneous dots stay smooth on an integrated GPU.
+--------------------------------------------------------------------------- */
+
+.attack-dot {
+  will-change: left, transform, opacity;
+  animation-iteration-count: infinite;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.75, 0.35);
+}
+
+.attack-dot--paused,
+.attack-dot:hover {
+  animation-play-state: paused;
+}
+
+/* Real attack, stopped dead at the boundary. */
+@keyframes stream-blocked {
+  0%   { left: 4%;  opacity: 0;   transform: translateY(-50%) scale(0.4); }
+  6%   { left: 6%;  opacity: 1;   transform: translateY(-50%) scale(1); }
+  46%  { left: 49%; opacity: 1;   transform: translateY(-50%) scale(1); }
+  53%  { left: 50%; opacity: 1;   transform: translateY(-50%) scale(1.9); }
+  64%  { left: 50%; opacity: 0;   transform: translateY(-50%) scale(0.2); }
+  100% { left: 50%; opacity: 0;   transform: translateY(-50%) scale(0.2); }
+}
+
+/* Real attack that got through -- reaches the system and lands. */
+@keyframes stream-missed {
+  0%   { left: 4%;  opacity: 0; transform: translateY(-50%) scale(0.4); }
+  6%   { left: 6%;  opacity: 1; transform: translateY(-50%) scale(1); }
+  50%  { left: 50%; opacity: 1; transform: translateY(-50%) scale(1.35); }
+  88%  { left: 93%; opacity: 1; transform: translateY(-50%) scale(1); }
+  94%  { left: 95%; opacity: 1; transform: translateY(-50%) scale(1.8); }
+  100% { left: 96%; opacity: 0; transform: translateY(-50%) scale(0.6); }
+}
+
+/* Legitimate traffic, correctly allowed through -- quiet by design. */
+@keyframes stream-cleared {
+  0%   { left: 4%;  opacity: 0;    transform: translateY(-50%) scale(0.35); }
+  8%   { left: 7%;  opacity: 0.55; transform: translateY(-50%) scale(0.8); }
+  92%  { left: 93%; opacity: 0.55; transform: translateY(-50%) scale(0.8); }
+  100% { left: 96%; opacity: 0;    transform: translateY(-50%) scale(0.4); }
+}
+
+/* Legitimate traffic wrongly blocked -- bounces off the boundary. */
+@keyframes stream-false-positive {
+  0%   { left: 4%;  opacity: 0; transform: translateY(-50%) scale(0.4); }
+  6%   { left: 6%;  opacity: 1; transform: translateY(-50%) scale(0.9); }
+  44%  { left: 49%; opacity: 1; transform: translateY(-50%) scale(0.9); }
+  52%  { left: 50%; opacity: 1; transform: translateY(-50%) scale(1.7); }
+  70%  { left: 34%; opacity: 0.8; transform: translateY(-50%) scale(0.9); }
+  100% { left: 22%; opacity: 0; transform: translateY(-50%) scale(0.5); }
+}
+
+/* Boundary shield: breathes while a run is live. */
+@keyframes shield-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.85; }
+}
+
+.shield-line {
+  animation: shield-pulse 2.4s ease-in-out infinite;
+}
+
+/* Scanning sweep across the defense boundary. */
+@keyframes shield-sweep {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  30%  { opacity: 0.7; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.shield-sweep {
+  animation: shield-sweep 3.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .attack-dot,
+  .shield-line,
+  .shield-sweep {
+    animation: none !important;
+  }
+  .attack-dot {
+    opacity: 1 !important;
+  }
+}

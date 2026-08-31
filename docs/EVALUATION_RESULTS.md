@@ -632,3 +632,66 @@ n_bonafide=100 (self-generated, negative control -- see script docstring). 'over
 - Independent, local re-run of the 1270 real held-out mule_network cases, using the frozen weights saved from notebooks/train_gnn_mule_network.ipynb.
 - recall=0.0024 at decision_threshold=0.8222 (threshold selected on IBM AML's own held-out split, see the notebook).
 - This is a second, independent check against the Colab run's own reported number in gnn_metrics_snippet.json -- see docs/DATASETS.md.
+
+## fusion (XGBoost + LightGBM + Autoencoder, weighted by real Stage-5 ROC-AUC) -- Section 6 evidence gate, held-out combinations
+
+- Weights: xgboost=0.3387, lightgbm=0.3388, autoencoder=0.3225
+- Threshold: 0.6756 (picked on Stage-5 validation's fused scores, not on held-out data itself)
+- Precision: 0.9621
+- Recall: 1.0000
+- F1: 0.9807
+- ROC-AUC: 1.0000
+- PR-AUC: 0.9994
+- False positive rate: 0.0228%
+- n_legit=1384857, n_fraud=8025 (held-out combinations, transaction-row granularity)
+- transaction_fraud recall: 1.0000 (n_fraud_rows=1200)
+- account_takeover recall: 1.0000 (n_fraud_rows=1600)
+- synthetic_identity recall: 1.0000 (n_fraud_rows=2400)
+- mule_network recall: 1.0000 (n_fraud_rows=2825)
+- Compare against the individual xgboost_adversarial_eval / lightgbm_adversarial_eval / autoencoder_adversarial_eval sections above -- same held-out rows, same legit baseline, so this is a fair apples-to-apples fusion-vs-best-single-model comparison.
+- Scope: weighted multi-model combination only. Customer-behavior corroboration (defend.fusion.behavioral_adjustment) is NOT exercised here -- no real customer_id linkage exists yet for generated cases (Phase 2.5). See defend/fusion.py.
+
+## xgboost -- Section 8 adversarial evaluation (Stage 7, frozen model, held-out combinations)
+
+- Precision: 0.9565
+- Recall: 0.8713
+- F1: 0.9119
+- ROC-AUC: 0.9987
+- PR-AUC: 0.9262
+- False positive rate (against Stage-5 validation-split legit rows): 0.0230%
+- n_legit=1384857, n_fraud=8025 (held-out combinations only, transaction-row granularity)
+- transaction_fraud recall: 1.0000 (n_fraud_rows=1200)
+- account_takeover recall: 1.0000 (n_fraud_rows=1600)
+- synthetic_identity recall: 0.9133 (n_fraud_rows=2400)
+- mule_network recall: 0.7080 (n_fraud_rows=2825)
+- Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.
+
+## lightgbm -- Section 8 adversarial evaluation (Stage 7, frozen model, held-out combinations)
+
+- Precision: 0.9447
+- Recall: 1.0000
+- F1: 0.9715
+- ROC-AUC: 1.0000
+- PR-AUC: 1.0000
+- False positive rate (against Stage-5 validation-split legit rows): 0.0339%
+- n_legit=1384857, n_fraud=8025 (held-out combinations only, transaction-row granularity)
+- transaction_fraud recall: 1.0000 (n_fraud_rows=1200)
+- account_takeover recall: 1.0000 (n_fraud_rows=1600)
+- synthetic_identity recall: 1.0000 (n_fraud_rows=2400)
+- mule_network recall: 1.0000 (n_fraud_rows=2825)
+- Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.
+
+## autoencoder -- Section 8 adversarial evaluation (Stage 7, frozen model, held-out combinations)
+
+- Precision: 0.8417
+- Recall: 0.8196
+- F1: 0.8305
+- ROC-AUC: 0.9991
+- PR-AUC: 0.9166
+- False positive rate (against Stage-5 validation-split legit rows): 0.0893%
+- n_legit=1384857, n_fraud=8025 (held-out combinations only, transaction-row granularity)
+- transaction_fraud recall: 0.4300 (n_fraud_rows=1200)
+- account_takeover recall: 0.5225 (n_fraud_rows=1600)
+- synthetic_identity recall: 1.0000 (n_fraud_rows=2400)
+- mule_network recall: 1.0000 (n_fraud_rows=2825)
+- Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.

@@ -51,6 +51,7 @@ Then, e.g.:
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -75,11 +76,29 @@ app = FastAPI(title="FraudShield Evaluation & Generation API", version="0.2.0")
 # CORS_ALLOWED_ORIGINS (comma-separated) so this can be widened per-deploy
 # via an env var, without a code change/rebuild every time the frontend URL
 # changes (Vercel preview deploys in particular get a new URL each time).
-_default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# Vite dev (5173) AND `vite preview` / `npm run preview` (4173) -- the
+# preview port was missing before, which is what produced the
+# `OPTIONS /runs/start 400 Bad Request` preflight rejections in the local
+# uvicorn log (a CORS preflight from a disallowed origin is answered 400,
+# not 403, so it reads like a malformed request rather than a CORS block).
+_default_origins = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:4173", "http://127.0.0.1:4173",
+]
 _extra_origins = [o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+# Vercel mints a brand-new hostname for every preview deploy, so pinning
+# exact origins means a broken demo on any redeploy. The regex covers
+# *.vercel.app plus any tunnel host used to expose this API during a demo
+# (cloudflared/ngrok), and can still be overridden/extended per-deploy via
+# CORS_ALLOWED_ORIGINS without a code change.
+_ORIGIN_REGEX = os.environ.get(
+    "CORS_ALLOWED_ORIGIN_REGEX",
+    r"https://([a-z0-9-]+\.)*(vercel\.app|trycloudflare\.com|ngrok-free\.app|ngrok\.io)",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_default_origins + _extra_origins,
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -111,6 +130,30 @@ class GenerateRunRequest(BaseModel):
     seed: Optional[int] = None
 
 
+def _spawn(args: list, cwd: str) -> subprocess.Popen:
+    """Launch a child process without asyncio's subprocess transport.
+
+    Why not asyncio.create_subprocess_exec: uvicorn on Windows runs the
+    SelectorEventLoop, which does NOT implement subprocess support --
+    create_subprocess_exec raises a bare NotImplementedError whose str()
+    is the empty string. That silently broke every /runs/start,
+    /evaluations/run and /generate/run on Windows: the endpoint still
+    returned 202 Accepted, the background task caught the exception,
+    recorded status="failed_to_launch" with error="", and no process was
+    ever created (verified 2026-08-31 against a live uvicorn --reload on
+    Windows: POST /runs/start -> failed_to_launch, error ""). Plain
+    subprocess.Popen has no such platform gap; the blocking wait on it is
+    pushed onto a worker thread with asyncio.to_thread so the event loop
+    is never blocked (the whole point of the original async design).
+    """
+    return subprocess.Popen(
+        args, cwd=cwd,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # Windows: don't pop a console window for the child.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+    )
+
+
 async def _execute_subprocess_run(registry: dict, run_id: str, script: Path, extra_args: list) -> None:
     """Shared launch/poll body for both /evaluations/run and /generate/run
     -- both master scripts share the exact same contract (argparse CLI,
@@ -120,18 +163,17 @@ async def _execute_subprocess_run(registry: dict, run_id: str, script: Path, ext
     state["status"] = "running"
     args = [sys.executable, str(script), "--json", *extra_args]
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args, cwd=str(BACKEND_DIR),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
+        proc = await asyncio.to_thread(_spawn, args, str(BACKEND_DIR))
     except Exception as exc:
         state["status"] = "failed_to_launch"
-        state["error"] = str(exc)
+        # repr(), not str(): a bare NotImplementedError stringifies to ""
+        # and made this failure mode invisible for an entire session.
+        state["error"] = repr(exc)
         state["finished_at"] = time.time()
         return
 
     state["pid"] = proc.pid
-    stdout, stderr = await proc.communicate()
+    stdout, stderr = await asyncio.to_thread(proc.communicate)
     state["finished_at"] = time.time()
     state["returncode"] = proc.returncode
 
@@ -278,16 +320,17 @@ async def start_agent_run(req: StartAgentRunRequest):
 
     async def _launch():
         try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, str(ORCH_SCRIPT), *args, cwd=str(BACKEND_DIR),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            proc = await asyncio.to_thread(
+                _spawn, [sys.executable, str(ORCH_SCRIPT), *args], str(BACKEND_DIR)
             )
         except Exception as exc:
             _orch_runs[run_id]["status"] = "failed_to_launch"
-            _orch_runs[run_id]["error"] = str(exc)
+            _orch_runs[run_id]["error"] = repr(exc)
+            _orch_runs[run_id]["finished_at"] = time.time()
             return
         _orch_runs[run_id]["pid"] = proc.pid
-        stdout, stderr = await proc.communicate()
+        _orch_runs[run_id]["status"] = "running"
+        stdout, stderr = await asyncio.to_thread(proc.communicate)
         _orch_runs[run_id]["status"] = "process_exited"
         _orch_runs[run_id]["returncode"] = proc.returncode
         _orch_runs[run_id]["finished_at"] = time.time()

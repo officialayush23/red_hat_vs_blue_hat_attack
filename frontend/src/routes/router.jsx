@@ -13,7 +13,16 @@ import { RunResultsPage } from "@/features/results/RunResultsPage";
 import { ModelPerformancePage } from "@/features/performance/ModelPerformancePage";
 import { ReportPage } from "@/features/reports/ReportPage";
 import { ArchitecturePage } from "@/features/architecture/ArchitecturePage";
+import { WarRoomPage } from "@/features/warroom/WarRoomPage";
 export const router = createBrowserRouter([{
+  // The war room is a deliberate full-bleed break-out from AppShell's
+  // max-w-6xl content column: it IS the screen you land on the moment a
+  // run starts, and a 460px-tall attack stream squeezed into a centred
+  // column with a sidebar next to it reads as a widget rather than a
+  // console. Its own command bar carries the way back out.
+  path: "/runs/:runId/live",
+  element: <WarRoomPage />
+}, {
   path: "/",
   element: <AppShell />,
   children: [{
