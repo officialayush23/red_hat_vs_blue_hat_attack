@@ -80,7 +80,7 @@ export async function getRun(id) {
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data ? mapCampaignRun(data) : undefined;
+  return data ? mapCampaignRun(data) : null;
 }
 
 // POST /api/runs — launches the real agent_runner.py orchestrator via

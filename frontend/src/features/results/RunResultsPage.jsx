@@ -1,5 +1,5 @@
-import { useParams } from "react-router-dom";
-import { ArrowRightIcon } from "lucide-react";
+import { useParams, Link } from "react-router-dom";
+import { ArrowRightIcon, ClockIcon } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { RunStatusBadge } from "@/components/shared/badges";
 import { StatCard } from "@/components/shared/StatCard";
@@ -10,6 +10,8 @@ import { useDefenseMetrics } from "@/hooks/useEvaluations";
 import { DetectionTrendChart } from "@/features/dashboard/DetectionTrendChart";
 import { CaughtVsMissedChart } from "@/features/dashboard/CaughtVsMissedChart";
 import { ATTACK_CATEGORY_LABEL } from "@/types";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { Button } from "@/components/ui/button";
 export function RunResultsPage() {
   const {
     runId = ""
@@ -21,10 +23,18 @@ export function RunResultsPage() {
   const {
     data: metrics
   } = useDefenseMetrics(runId);
-  if (isLoading || !run) {
+  if (isLoading) {
     return <div className="space-y-6">
         <Skeleton className="h-16 w-full" />
         <Skeleton className="h-32 w-full" />
+      </div>;
+  }
+  if (!run) {
+    return <div className="space-y-6">
+        <PageHeader eyebrow="Results" title="Run results" />
+        <EmptyState icon={<ClockIcon className="size-10" />} title="This run hasn't reported in yet" description="If you just started it, results usually land here within a few seconds. If it's been longer than that, the run ID may be wrong or the run failed to launch -- check Agent Console for its raw process status." action={<Button asChild variant="outline">
+                <Link to="/runs">Back to defense runs</Link>
+              </Button>} />
       </div>;
   }
   return <div className="space-y-6">

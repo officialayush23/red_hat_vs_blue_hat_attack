@@ -9,7 +9,7 @@ export async function listAttacks() {
 
 // GET /api/attacks/:id
 export async function getAttack(id) {
-  return mockDelay(getAttackById(id));
+  return mockDelay(getAttackById(id) ?? null);
 }
 
 // GET /api/attacks/:id/cases?limit=
@@ -19,5 +19,5 @@ export async function getAttackCases(runId, limit = 6) {
 
 // GET /api/attacks/:id/representative-case
 export async function getRepresentativeCase(attackId) {
-  return mockDelay(getCaseForAttack(attackId));
+  return mockDelay(getCaseForAttack(attackId) ?? null);
 }

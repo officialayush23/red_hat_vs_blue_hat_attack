@@ -16,6 +16,7 @@ import { CaughtVsMissedChart } from "@/features/dashboard/CaughtVsMissedChart";
 import { AttackSchematic } from "@/components/shared/AttackSchematic";
 import { AttackSimulationCanvas } from "@/components/shared/AttackSimulationCanvas";
 import { ATTACK_CATEGORY_LABEL } from "@/types";
+import { EmptyState } from "@/components/shared/EmptyState";
 export function DashboardPage() {
   const {
     data: runs,
@@ -29,7 +30,7 @@ export function DashboardPage() {
     data: metrics
   } = useDefenseMetrics(latestRun?.id ?? "");
   const activeRuns = runs?.filter(r => r.status === "running").length ?? 0;
-  if (isLoading || !latestRun) {
+  if (isLoading) {
     return <div className="space-y-6">
         <Skeleton className="h-16 w-full" />
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -37,6 +38,14 @@ export function DashboardPage() {
           length: 8
         }).map((_, i) => <Skeleton key={i} className="h-24" />)}
         </div>
+      </div>;
+  }
+  if (!latestRun) {
+    return <div className="space-y-6">
+        <PageHeader eyebrow="Overview" title="Fraud defense overview" description="What the adversarial feedback loop has found, and whether the defense is actually getting stronger." />
+        <EmptyState icon={<ShieldCheckIcon className="size-10" />} title="No defense runs yet" description="Kick off an adversarial evaluation to populate this dashboard with real detection results." action={<Button asChild>
+                <Link to="/runs/new">Start Adversarial Evaluation</Link>
+              </Button>} />
       </div>;
   }
   return <div className="space-y-6">

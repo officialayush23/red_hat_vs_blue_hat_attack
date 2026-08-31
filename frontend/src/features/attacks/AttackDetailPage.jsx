@@ -1,5 +1,5 @@
 import { useParams, Link } from "react-router-dom";
-import { ChevronLeftIcon } from "lucide-react";
+import { ChevronLeftIcon, ShieldAlertIcon } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SeverityBadge, AttackStatusBadge, DifficultyBadge, DecisionBadge } from "@/components/shared/badges";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbS
 import { useAttack, useRepresentativeCase } from "@/hooks/useAttacks";
 import { AttackChainFlow } from "@/features/attacks/AttackChainFlow";
 import { ATTACK_CATEGORY_LABEL, MODALITY_LABEL } from "@/types";
+import { EmptyState } from "@/components/shared/EmptyState";
 export function AttackDetailPage() {
   const {
     attackId = ""
@@ -22,8 +23,13 @@ export function AttackDetailPage() {
   const {
     data: evalCase
   } = useRepresentativeCase(attackId);
-  if (isLoading || !attack) {
+  if (isLoading) {
     return <Skeleton className="h-96 w-full" />;
+  }
+  if (!attack) {
+    return <EmptyState icon={<ShieldAlertIcon className="size-10" />} title="Attack not found" description="This attack ID doesn't exist in the library." action={<Button asChild variant="outline">
+              <Link to="/attacks">Back to attack library</Link>
+            </Button>} />;
   }
   const triggered = evalCase?.modelSignals.filter(s => s.triggered) ?? [];
   const missed = evalCase?.modelSignals.filter(s => !s.triggered) ?? [];

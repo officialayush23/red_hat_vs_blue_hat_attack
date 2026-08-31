@@ -19,7 +19,7 @@ export async function fetchReport(runId) {
     listModelPerformance(),
     getDefenseMetrics(runId),
   ]);
-  if (!run) return undefined;
+  if (!run) return null;
 
   const weaknesses = run.weaknesses ?? [];
   const topMissedScenarios = [...weaknesses]

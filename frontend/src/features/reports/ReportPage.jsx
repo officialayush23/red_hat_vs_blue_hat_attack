@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { FileJsonIcon, FileSpreadsheetIcon } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SeverityBadge } from "@/components/shared/badges";
@@ -11,6 +11,7 @@ import { useReport } from "@/hooks/useReports";
 import { exportReport } from "@/services/api/reports";
 import { DetectionTrendChart } from "@/features/dashboard/DetectionTrendChart";
 import { ATTACK_CATEGORY_LABEL, MODALITY_LABEL } from "@/types";
+import { EmptyState } from "@/components/shared/EmptyState";
 function downloadReport(report, format) {
   const blob = exportReport(report, format);
   const url = URL.createObjectURL(blob);
@@ -30,10 +31,18 @@ export function ReportPage() {
     data: report,
     isLoading
   } = useReport(runId);
-  if (isLoading || !report) {
+  if (isLoading) {
     return <div className="space-y-6">
         <Skeleton className="h-16 w-full" />
         <Skeleton className="h-64 w-full" />
+      </div>;
+  }
+  if (!report) {
+    return <div className="space-y-6">
+        <PageHeader eyebrow="Reports" title="Defense report" />
+        <EmptyState icon={<FileJsonIcon className="size-10" />} title="No report for this run" description="This run doesn't have results to report on yet -- it may still be in progress, or the run ID no longer exists." action={<Button asChild variant="outline">
+                <Link to="/runs">Back to defense runs</Link>
+              </Button>} />
       </div>;
   }
   return <div className="space-y-6">

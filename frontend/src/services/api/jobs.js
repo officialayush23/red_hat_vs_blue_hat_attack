@@ -11,6 +11,21 @@
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+// Defensive check: a deployed build whose API_BASE still resolves to
+// localhost means VITE_API_BASE_URL wasn't baked into THIS build -- Vite
+// only reads env vars at build time, so saving the variable in Vercel's
+// dashboard does nothing until a fresh build actually runs. Every call
+// below then fails with a browser-blocked CORS/loopback error that looks
+// identical to a real network outage, so this logs a loud, specific
+// explanation instead of leaving that to guesswork.
+if (typeof window !== "undefined" && !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname) && /^https?:\/\/(localhost|127\.0\.0\.1)/.test(API_BASE)) {
+  console.error(
+    `[jobs.js] API_BASE is "${API_BASE}" on a non-local deploy (${window.location.hostname}). ` +
+    "VITE_API_BASE_URL wasn't baked into this build -- set it in Vercel's Environment Variables " +
+    "(Production scope) and trigger a fresh deploy, not just a variable save."
+  );
+}
+
 async function apiPost(path, body) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
