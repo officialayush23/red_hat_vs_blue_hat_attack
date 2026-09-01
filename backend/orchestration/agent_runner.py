@@ -59,6 +59,21 @@ METRICS_JSON = BACKEND_DIR / "defend" / "models" / "metrics.json"
 GEN_SCRIPT = BACKEND_DIR / "generate" / "run_all_generation.py"
 EVAL_SCRIPT = BACKEND_DIR / "evaluation" / "run_all_evaluations.py"
 ADAPTIVE_SCRIPT = BACKEND_DIR / "evaluation" / "adaptive_weakness_round.py"
+STORAGE_SYNC_SCRIPT = BACKEND_DIR / "tools" / "storage_sync.py"
+GENERATED_DIR = BACKEND_DIR.parent / "data" / "generated"
+
+# Which data/generated/ bundles a family needs, for the hydration step
+# below. Only what the run's own scope requires is pulled -- a
+# transaction-only run has no reason to download 108 MB of voice audio.
+BUNDLES_FOR_FAMILY = {
+    "transaction_fraud": ["attacks", "synthetic_customers"],
+    "account_takeover": ["attacks", "synthetic_customers"],
+    "synthetic_identity": ["attacks", "synthetic_customers"],
+    "mule_network": ["attacks", "synthetic_customers"],
+    "voice_scam": ["voice_attacks", "voice_bonafide", "synthetic_customers"],
+    "document_fraud": ["document_attacks", "document_bonafide"],
+    "phishing_scam": ["phishing_attacks", "phishing_bonafide"],
+}
 
 TABULAR_FAMILIES = {"transaction_fraud", "account_takeover", "synthetic_identity", "mule_network"}
 
@@ -313,6 +328,54 @@ def _build_weaknesses(family_metrics: dict, weakest) -> list:
     return out
 
 
+def _bundle_present(name: str) -> bool:
+    """A bundle counts as present only if its directory holds real files --
+    an empty directory left behind by a partial pull is not data."""
+    d = GENERATED_DIR / name
+    if not d.is_dir():
+        return False
+    return any(p.is_file() and p.name != ".storage_bundle.json" for p in d.rglob("*"))
+
+
+def _hydrate_if_needed(families: list) -> dict:
+    """Pull the data/generated/ bundles this run's scope needs, if they are
+    not already on disk.
+
+    This runs as part of the run itself rather than behind a separate
+    "hydrate" button, because a container built from this repo has no
+    data/generated/ (gitignored, 236 MB) and a run launched against it
+    completes in seconds reporting "Generation had failures" and
+    attacksTested: 0 -- structurally correct and completely empty. Making
+    the person notice that, find a button and press it first is a worse
+    design than the run fetching what it needs; the fetch is a real,
+    reported stage, not a hidden side effect.
+
+    On a machine that already has the data (a developer's laptop) every
+    bundle is present and this returns immediately, having done nothing."""
+    needed = sorted({b for f in families for b in BUNDLES_FOR_FAMILY.get(f, [])})
+    missing = [b for b in needed if not _bundle_present(b)]
+    if not missing:
+        return {"needed": needed, "missing": [], "pulled": [], "ok": True,
+                "summary": f"All {len(needed)} required bundle(s) already on disk"}
+
+    result = _run_script(STORAGE_SYNC_SCRIPT, ["pull", "--only", ",".join(missing)], timeout=1800)
+    still_missing = [b for b in missing if not _bundle_present(b)]
+    return {
+        "needed": needed,
+        "missing": missing,
+        "pulled": [b for b in missing if b not in still_missing],
+        "stillMissing": still_missing,
+        "ok": result["ok"] and not still_missing,
+        "seconds": result["seconds"],
+        "tail": result["tail"],
+        "summary": (
+            f"Pulled {len(missing) - len(still_missing)}/{len(missing)} bundle(s) from Supabase Storage "
+            f"in {result['seconds']}s"
+            if result["ok"] else f"Storage pull failed after {result['seconds']}s -- {result['tail'][-200:]}"
+        ),
+    }
+
+
 def _objective_short(objective: str) -> str:
     return (objective[:77] + "...") if len(objective) > 80 else objective
 
@@ -447,6 +510,39 @@ def main() -> int:
             result=f"Resolved to: {', '.join(families)} ({n_per_family} cases/family planned)",
             next_="Hand off to Threat Research",
         )
+
+        # ---- 1b. data-loader: make sure this instance actually has data ----
+        # Reported as a real step so the war room shows it happening,
+        # rather than a silent pause before generation. On a machine that
+        # already has data/generated/ this completes instantly and says so.
+        hydrate_step = tracker.start_step(
+            "orchestrator",
+            detail="Checking this instance has the generated data these families need",
+        )
+        hydration = _hydrate_if_needed(families)
+        tracker.complete_step(
+            hydrate_step,
+            observation=(
+                f"Required bundles: {', '.join(hydration['needed']) or 'none'}. "
+                + (f"Missing locally: {', '.join(hydration['missing'])}"
+                   if hydration["missing"] else "All present on disk.")
+            ),
+            decision=("Pull the missing bundles from Supabase Storage before generating -- "
+                      "generating over an empty data/generated/ produces a run with 0 attacks tested"
+                      if hydration["missing"] else
+                      "Nothing to fetch -- proceed straight to generation"),
+            tool="tools/storage_sync.py pull (Supabase Storage bucket 'generated-data')",
+            action=(f"Pull {len(hydration['missing'])} bundle(s)" if hydration["missing"]
+                    else "Verify bundle presence on disk"),
+            result=hydration["summary"],
+            next_="Hand off to Threat Research",
+        )
+        if not hydration["ok"]:
+            # Not fatal: the generation stage below already degrades
+            # honestly when its inputs are missing, and stopping here would
+            # hide the rest of the trace. But the run must not later look
+            # like the data was fine.
+            tracker.update_meta({"dataHydrationFailed": True})
 
         # ---- 2. threat-research: real combinations from split_policy.py ----
         combo_summaries = []

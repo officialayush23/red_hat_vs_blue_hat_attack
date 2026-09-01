@@ -23,13 +23,14 @@ export function CreateRunPage() {
   const { data: runs } = useRuns();
   const { data: dataStatus } = useDataStatus(api.live);
   const hydrate = useHydrate();
-  // A reachable backend is not enough: the Railway image is built from the
-  // repo and data/generated/ is gitignored, so a container that has never
-  // been hydrated runs the whole 7-stage pipeline over zero cases and
-  // finishes in seconds. Offering Start in that state produces a real-
-  // looking run with attacksTested: 0, which is worse than refusing.
+  // The Railway image is built from the repo and data/generated/ is
+  // gitignored, so a fresh container has no cases to attack. That is no
+  // longer a reason to block Start: agent_runner.py pulls the bundles its
+  // scope needs from Supabase Storage as a real, reported first stage of
+  // the run itself. This flag only decides whether to warn that the run
+  // will take a few extra minutes.
   const hasData = dataStatus ? dataStatus.canRunPipeline : true;
-  const canStart = api.live && hasData;
+  const canStart = api.live;
   const [scope, setScope] = useState(["transaction", "behavioral", "graph"]);
   const [severity, setSeverity] = useState("adaptive");
   const [scenarioCount, setScenarioCount] = useState(1000);
@@ -91,18 +92,21 @@ export function CreateRunPage() {
       {api.live && !hasData && (
         <Alert>
           <DatabaseIcon className="size-4" />
-          <AlertTitle>This backend has no generated data yet</AlertTitle>
+          <AlertTitle>This backend will fetch its data first</AlertTitle>
           <AlertDescription className="space-y-2">
             <p>
               <code className="font-mono text-xs">{api.apiBase}</code> is reachable and healthy, but its
-              <code className="mx-1 font-mono text-xs">data/generated/</code> directory is empty — the container image is
-              built from the repo, and that directory is gitignored (236&nbsp;MB of regenerable cases, audio and
-              invoices). A run started now would execute all 7 stages, report &ldquo;Generation had failures&rdquo;, and
-              finish with <strong>0 attacks tested</strong>. Rather than let that happen, Start is disabled.
+              <code className="mx-1 font-mono text-xs">data/generated/</code> directory is empty — the container image
+              is built from the repo, and that directory is gitignored (236&nbsp;MB of regenerable cases, audio and
+              invoices).
             </p>
             <p>
-              Pull the dataset bundles from Supabase Storage into that instance — a few hundred MB, so it takes a few
-              minutes.
+              You can still start a run. Its first stage pulls the bundles this scope actually needs from Supabase
+              Storage and reports doing so in the live trace — a transaction-only run fetches ~2&nbsp;MB, a
+              voice run ~120&nbsp;MB. Expect the first run on a cold instance to take a few extra minutes.
+            </p>
+            <p className="text-muted-foreground">
+              Optional: warm the instance now so the run itself starts clean.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={() => hydrate.mutate({})} disabled={hydrate.isPending}>
@@ -111,7 +115,7 @@ export function CreateRunPage() {
                     <LoaderCircleIcon className="size-4 animate-spin" /> Hydrating…
                   </>
                 ) : (
-                  <>Hydrate this instance</>
+                  <>Pre-warm now (optional)</>
                 )}
               </Button>
               {latestCompleted && (

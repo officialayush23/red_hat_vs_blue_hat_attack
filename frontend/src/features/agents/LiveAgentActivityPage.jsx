@@ -10,10 +10,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRun } from "@/hooks/useRuns";
 import { useAgentSteps } from "@/hooks/useAgentActivity";
 
-// agent_runner.py always plans exactly these 7 stages (see its
-// module docstring) — used only to render "x of 7 stages" progress
-// against a known total, not to fabricate any stage's content.
-const TOTAL_STAGES = 7;
+// agent_runner.py reports 8 steps: the 7 planned stages plus the
+// data-loader step that hydrates this instance before generation. Used
+// only to render progress against a known total, never to fabricate a
+// stage's content.
+const TOTAL_STAGES = 8;
 const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed"]);
 
 export function LiveAgentActivityPage() {
