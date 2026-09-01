@@ -193,7 +193,11 @@ def _load_customer_roster() -> list:
     anyone who hasn't run generate/synthetic_customers.py."""
     if not CUSTOMERS_DIR.exists():
         return []
-    paths = sorted(CUSTOMERS_DIR.glob("*.json"))
+    # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
+    # directory it manages, so a bare *.json glob picks it up as a phantom entry
+    # after a `storage_sync.py pull` -- on Colab, never locally. Same guard
+    # synthetic_customers.load_roster() already carries.
+    paths = sorted(p for p in CUSTOMERS_DIR.glob("*.json") if not p.name.startswith("."))
     return [json.loads(p.read_text()) for p in paths]
 
 

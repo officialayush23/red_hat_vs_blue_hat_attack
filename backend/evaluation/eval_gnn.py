@@ -256,7 +256,11 @@ def main() -> None:
         return
     score_case, threshold = result
 
-    case_paths = sorted(HELD_OUT_DIR.glob("*.json"))
+    # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
+    # directory it manages, so a bare *.json glob picks it up as a phantom entry
+    # after a `storage_sync.py pull` -- on Colab, never locally. Same guard
+    # synthetic_customers.load_roster() already carries.
+    case_paths = sorted(p for p in HELD_OUT_DIR.glob("*.json") if not p.name.startswith("."))
     if not case_paths:
         raise FileNotFoundError(
             f"No cases under {HELD_OUT_DIR} -- run generate/inject_attacks.py first."

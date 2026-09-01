@@ -97,7 +97,11 @@ def _load_customer_roster() -> list:
     script's separate voice_gen_env venv unnecessarily. Same idempotent
     on-disk contract as synthetic_customers.load_roster()."""
     customers_dir = REPO_ROOT / "data" / "generated" / "synthetic_customers"
-    paths = sorted(customers_dir.glob("*.json"))
+    # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
+    # directory it manages, so a bare *.json glob picks it up as a phantom entry
+    # after a `storage_sync.py pull` -- on Colab, never locally. Same guard
+    # synthetic_customers.load_roster() already carries.
+    paths = sorted(p for p in customers_dir.glob("*.json") if not p.name.startswith("."))
     if not paths:
         raise FileNotFoundError(
             f"No synthetic customer files under {customers_dir}. Run "

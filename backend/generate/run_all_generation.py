@@ -211,7 +211,7 @@ def case_counts() -> dict:
                     continue
                 key = family_dir.name
                 counts.setdefault(key, {}).setdefault(split_dir.name, 0)
-                counts[key][split_dir.name] = len(list(family_dir.glob("*.json")))
+                counts[key][split_dir.name] = sum(1 for f in family_dir.glob("*.json") if not f.name.startswith("."))
     for extra_name, extra_dir in [
         ("voice_scam", repo_root / "data" / "generated" / "voice_attacks"),
         ("document_fraud", repo_root / "data" / "generated" / "document_attacks"),
@@ -219,7 +219,7 @@ def case_counts() -> dict:
         ("video_kyc_impersonation", repo_root / "data" / "generated" / "video_kyc_attacks"),
     ]:
         if extra_dir.exists():
-            n = len(list(extra_dir.rglob("*.json")))
+            n = sum(1 for f in extra_dir.rglob("*.json") if not f.name.startswith("."))
             if n:
                 counts[extra_name] = {"total": n}
     return counts

@@ -203,7 +203,12 @@ def _phishing_attack_rows() -> list:
 
 def _phishing_bonafide_rows() -> list:
     rows = []
-    for path in sorted((GENERATED_DIR / "phishing_bonafide").glob("*.json")):
+    # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
+    # directory it manages, so a bare *.json glob picks it up as a phantom entry
+    # after a `storage_sync.py pull` -- on Colab, never locally. Same guard
+    # synthetic_customers.load_roster() already carries.
+    for path in sorted(p for p in (GENERATED_DIR / "phishing_bonafide").glob("*.json")
+                       if not p.name.startswith(".")):
         raw = json.loads(path.read_text())
         rows.append({
             "id": raw["case_id"],

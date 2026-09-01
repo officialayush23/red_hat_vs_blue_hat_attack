@@ -132,7 +132,11 @@ def main() -> None:
     bundle = joblib.load(MODEL_PATH)
     vectorizer, model = bundle["vectorizer"], bundle["model"]
 
-    bonafide_paths = sorted(BONAFIDE_DIR.glob("*.json"))
+    # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
+    # directory it manages, so a bare *.json glob picks it up as a phantom entry
+    # after a `storage_sync.py pull` -- on Colab, never locally. Same guard
+    # synthetic_customers.load_roster() already carries.
+    bonafide_paths = sorted(p for p in BONAFIDE_DIR.glob("*.json") if not p.name.startswith("."))
     if not bonafide_paths:
         raise FileNotFoundError(
             f"No bonafide messages under {BONAFIDE_DIR}. Run generate/generate_phishing_attacks.py "
