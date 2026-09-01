@@ -40,3 +40,4 @@ Thumbs.db
 # Colab evidence-gate transfer package (2026-08-30) -- data already lives under
 # data/generated/, this is just a duplicate bundled for upload, safe to delete
 colab_document_fraud_package.tar.gz
+.eval_cache/

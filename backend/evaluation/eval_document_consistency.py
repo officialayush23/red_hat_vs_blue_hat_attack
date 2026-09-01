@@ -49,6 +49,9 @@ BONAFIDE_DIR = REPO_ROOT / "data" / "generated" / "document_bonafide"
 DOCUMENT_ATTACKS_DIR = REPO_ROOT / "data" / "generated" / "document_attacks"
 MODELS_DIR = BACKEND_DIR / "defend" / "models"
 RESULTS_JSON = MODELS_DIR / "metrics.json"
+# Resumable score checkpoints -- see _score_with_progress. Kept out of
+# data/generated/ so storage_sync bundles never carry them.
+CACHE_DIR = BACKEND_DIR / ".eval_cache"
 RESULTS_MD = BACKEND_DIR.parent / "docs" / "EVALUATION_RESULTS.md"
 
 
@@ -82,23 +85,70 @@ def _append_results_md(overall: dict, per_split: dict, n_bonafide: int, threshol
         f.write("\n".join(lines))
 
 
+def _cache_path(backend: str) -> Path:
+    """One checkpoint file per OCR backend -- scores from different engines
+    are different measurements and must never be mixed."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return CACHE_DIR / f"document_scores_{backend}.json"
+
+
+def _load_cache(backend: str) -> dict:
+    f = _cache_path(backend)
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return {}   # a truncated checkpoint is worth nothing, not worth crashing over
+
+
 def _score_with_progress(detector, paths: list, label: str) -> tuple:
-    """score_batch() is a silent list comprehension -- on CPU, a single
-    PaddleOCR-VL forward pass can take long enough that a genuinely-working
-    run and a genuinely-hung one look identical on screen. Print per-image
-    timing so that ambiguity never happens again. Uses score_with_evidence()
-    (Task #32) so the evidence viewer gets real per-field mismatch detail,
-    not just the number -- score() itself is unchanged, still Principle-13
-    compliant (file path only)."""
-    scores = []
-    evidences = []
+    """Scores every image, printing per-image timing, and CHECKPOINTS AS IT GOES.
+
+    The timing print exists because a single OCR forward pass can take long
+    enough on CPU that a working run and a hung one look identical on screen.
+
+    The checkpoint exists because of 2026-09-01: a Colab runtime hit its usage
+    limit at image 290 of 680 and every one of those ~10 minutes of real
+    scoring was lost, because results only existed in memory until the very
+    end of the run. Scoring is deterministic and pure (Principle 13: the
+    detector sees a file path and nothing else), so a score computed once is
+    valid forever -- there is no reason to ever compute one twice.
+
+    Keyed by (backend, image path). Re-running after any interruption resumes
+    where it stopped; re-running a completed backend is nearly instant, which
+    also makes the bake-off cheap to repeat.
+    """
+    backend = getattr(detector, "backend_name", "unknown")
+    cache = _load_cache(backend)
+    cache_file = _cache_path(backend)
+
+    scores, evidences = [], []
+    computed = 0
     for i, path in enumerate(paths, 1):
+        key = str(path)
+        hit = cache.get(key)
+        if hit is not None:
+            scores.append(hit["score"])
+            evidences.append(hit["evidence"])
+            continue
+
         t0 = time.monotonic()
         score, evidence = detector.score_with_evidence(path)
         dt = time.monotonic() - t0
         scores.append(score)
         evidences.append(evidence)
+        cache[key] = {"score": float(score), "evidence": list(evidence)}
+        computed += 1
+        # Flush every image. A checkpoint that is only written every N images
+        # loses up to N images to a kill -9, and Colab does not warn first.
+        cache_file.write_text(json.dumps(cache))
         print(f"  [{label}] {i}/{len(paths)}  ({dt:.1f}s this image)", flush=True)
+
+    reused = len(paths) - computed
+    if reused:
+        print(f"  [{label}] reused {reused} cached score(s) from {cache_file.name}; "
+              f"computed {computed}", flush=True)
     return np.array(scores, dtype="float64"), evidences
 
 
