@@ -129,9 +129,54 @@ _BACKEND_ORDER = ("rapidocr", "tesseract", "easyocr", "paddlevl")
 class _RapidOCRBackend:
     name = "rapidocr"
 
+    # rapidocr-onnxruntime runs the PP-OCR ONNX graphs through onnxruntime,
+    # so "GPU" here is entirely a question of which onnxruntime EXECUTION
+    # PROVIDER is registered -- not of different weights. The det/cls/rec
+    # graphs, their thresholds and their post-processing are byte-identical
+    # either way; CUDA only changes where the matmuls run. That is why a
+    # CUDA run is NOT recorded as a separate backend entry: it is the same
+    # detector, faster.
+    #
+    # The plain `pip install rapidocr-onnxruntime` pulls CPU onnxruntime,
+    # which is why the 680-image bake-off ran at CPU speed on Colab. To get
+    # CUDA you must install `onnxruntime-gpu` and ASK for it -- RapidOCR
+    # defaults every stage to CPU regardless of what is installed.
+    #
+    # DOC_OCR_USE_GPU=auto (default) uses CUDA when the provider is actually
+    # registered, and silently stays on CPU when it is not, so the same code
+    # path runs on a Windows laptop and on a Colab T4. =1 forces CUDA and
+    # raises if it is unavailable (so a "GPU run" that quietly fell back to
+    # CPU can't be mistaken for a fast one); =0 forces CPU.
+
     def __init__(self):
         from rapidocr_onnxruntime import RapidOCR
-        self._engine = RapidOCR()
+
+        want = os.environ.get("DOC_OCR_USE_GPU", "auto").strip().lower()
+        available = False
+        try:
+            import onnxruntime
+            available = "CUDAExecutionProvider" in onnxruntime.get_available_providers()
+        except Exception:
+            available = False
+
+        if want in ("1", "true", "yes"):
+            if not available:
+                raise RuntimeError(
+                    "DOC_OCR_USE_GPU=1 but onnxruntime has no CUDAExecutionProvider. "
+                    "Install onnxruntime-gpu (and remove the CPU onnxruntime wheel -- "
+                    "the two conflict), or set DOC_OCR_USE_GPU=auto to run on CPU."
+                )
+            use_cuda = True
+        elif want in ("0", "false", "no"):
+            use_cuda = False
+        else:
+            use_cuda = available
+
+        self.use_cuda = use_cuda
+        if use_cuda:
+            self._engine = RapidOCR(det_use_cuda=True, cls_use_cuda=True, rec_use_cuda=True)
+        else:
+            self._engine = RapidOCR()
 
     def read(self, image_path: str) -> str:
         result, _ = self._engine(str(image_path))
