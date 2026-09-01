@@ -1,4 +1,4 @@
-import { ActivityIcon, FileTextIcon, GaugeIcon, LayoutDashboardIcon, ListChecksIcon, Network, PlusCircleIcon, RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, TriangleAlertIcon } from "lucide-react";
+import { ActivityIcon, FileTextIcon, GaugeIcon, LayoutDashboardIcon, ListChecksIcon, Network, PlusCircleIcon, RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
 import { useRuns } from "@/hooks/useRuns";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar as SidebarPrimitive, SidebarGroup, SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
@@ -54,6 +54,9 @@ export function Sidebar() {
           </SidebarMenuButton>
           <SidebarMenuButton to="/attacks" icon={ShieldAlertIcon}>
             Attack Library
+          </SidebarMenuButton>
+          <SidebarMenuButton to="/customers" icon={UsersIcon}>
+            Customer Universe
           </SidebarMenuButton>
         </SidebarGroup>
 

@@ -189,13 +189,21 @@ def push(only=None) -> int:
             )
             _log(f"  uploaded {key} ({len(part) / 1e6:.1f} MB)")
 
-        manifest["bundles"][name] = {
+        spec = {
             "parts": len(parts),
             "bytes": len(blob),
             "sha256": digest,
             "files": n_files,
             "rawBytes": raw_bytes,
         }
+        manifest["bundles"][name] = spec
+        # Write the same marker pull writes, so `status` can tell that the
+        # machine that pushed is in sync with Storage. Without this, push
+        # left every local directory unmarked and status reported
+        # "inSync": [] immediately after a successful upload of everything
+        # -- technically true of the marker files, actively misleading
+        # about the data.
+        (src / MARKER_NAME).write_text(json.dumps({**spec, "name": name}, indent=2))
         total_bytes += len(blob)
 
     client.storage.from_(BUCKET).upload(

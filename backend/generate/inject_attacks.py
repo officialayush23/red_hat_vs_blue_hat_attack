@@ -56,6 +56,12 @@ sys.path.insert(0, str(BACKEND_DIR))  # so `evaluation.*` / `generate.*` resolve
 import pandas as pd  # noqa: E402
 
 from evaluation.split_policy import FAMILIES, SPLIT_PORTIONS, get_combination, list_families  # noqa: E402
+
+# The families mutation_engine.mutate() actually implements (its own
+# if/elif chain, which raises KeyError for anything else). Kept here rather
+# than inferred so adding a family to split_policy.FAMILIES can never again
+# silently break this script's default run.
+TABULAR_FAMILIES = ("transaction_fraud", "account_takeover", "synthetic_identity", "mule_network")
 from generate import mutation_engine  # noqa: E402
 from generate.artifact_generators import ring_gen, transaction_gen  # noqa: E402
 from generate.validators import validate_case  # noqa: E402
@@ -225,10 +231,39 @@ def main() -> None:
                          help="Subset of families to generate (default: all Phase 1 families).")
     args = parser.parse_args()
 
+    # This script generates TABULAR attack families only -- the ones
+    # mutation_engine.mutate() has real mutation logic for. The other three
+    # families in split_policy.FAMILIES (voice_scam, document_fraud,
+    # phishing_scam) are media families with their own generators
+    # (generate_voice_attacks.py / generate_document_attacks.py /
+    # generate_phishing_attacks.py), and always had.
+    #
+    # Defaulting to list_families() was correct when split_policy only held
+    # the four Phase 1 families. Once Phase 2 added the media families to
+    # that same dict, this default silently started asking mutation_engine
+    # for logic that does not exist, and the run died with
+    # `KeyError: "No mutation logic for family 'voice_scam'"` -- AFTER
+    # generating all four tabular families, so the per-case JSON was written
+    # but attacks_train/held_out.parquet, which is written at the end, was
+    # not. That is why eval_behavioral_adjustment then failed with "1600
+    # account_takeover rows but NONE carry a customer_id": it was reading a
+    # parquet from before the identity-linkage change, because the run that
+    # should have replaced it crashed one step short.
     families = args.families or list_families()
     unknown = set(families) - set(FAMILIES.keys())
     if unknown:
         raise SystemExit(f"Unknown families: {unknown}. Known: {list_families()}")
+    non_tabular = [f for f in families if f not in TABULAR_FAMILIES]
+    if args.families and non_tabular:
+        raise SystemExit(
+            f"{non_tabular} are media families, not tabular ones -- this script has no mutation "
+            f"logic for them. Generate them with their own scripts: voice_scam -> "
+            f"generate_voice_attacks.py, document_fraud -> generate_document_attacks.py, "
+            f"phishing_scam -> generate_phishing_attacks.py."
+        )
+    if non_tabular:
+        print(f"Skipping non-tabular families {non_tabular} -- they have their own generators.")
+        families = [f for f in families if f in TABULAR_FAMILIES]
 
     rng = random.Random(args.seed)
     print("Loading reference stats (amount/gap quantiles from real legitimate transactions)...")
