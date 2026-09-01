@@ -1,20 +1,26 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react"
+import { createContext, useContext, useMemo, useState } from "react"
 
 const OnboardingContext = createContext(null)
 const STORAGE_KEY = "fraudshield-onboarding-seen"
 
-export function OnboardingProvider({ children }) {
-  const [isOpen, setIsOpen] = useState(false)
+function hasSeenGuide() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === "true"
+  } catch {
+    // Storage unavailable (private mode, blocked site data). Showing the guide
+    // once per session is the right failure mode -- better than suppressing it
+    // for someone who has never seen it.
+    return false
+  }
+}
 
-  useEffect(() => {
-    let seen = false
-    try {
-      seen = localStorage.getItem(STORAGE_KEY) === "true"
-    } catch {
-      // if storage is unavailable, default to showing the guide once per session
-    }
-    if (!seen) setIsOpen(true)
-  }, [])
+export function OnboardingProvider({ children }) {
+  // Lazy initialiser, NOT an effect. Reading storage in useEffect meant the
+  // first paint always rendered isOpen=false and then immediately set it true,
+  // so a returning user could see the guide flash open and shut, and every
+  // mount cost an extra render pass. The value is known before the first
+  // render, so it belongs in the initial state.
+  const [isOpen, setIsOpen] = useState(() => !hasSeenGuide())
 
   const value = useMemo(
     () => ({

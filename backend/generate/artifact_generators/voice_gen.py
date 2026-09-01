@@ -68,15 +68,63 @@ class VoiceGenerator:
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._model = ChatterboxTurboTTS.from_pretrained(device=device)
 
+    def _patch_watermarker_dtype(self) -> None:
+        """Force float32 into Chatterbox's Perth watermarker.
+
+        2026-09-01, on a CPU runtime: generation died with
+
+            VOICE GENERATION FAILED: expected scalar type Double but found Float
+
+        after the model and PerthNet had both loaded successfully, so it was
+        never an install problem. Chatterbox hands the generated waveform to
+        resemble-perth for provenance watermarking, and perth does
+        torch.from_numpy(wav) without asserting a dtype. numpy float64 in
+        produces a Double tensor, PerthNet's convolutions are Float, and torch
+        refuses the mix. On CUDA the array happens to arrive as float32 and the
+        bug never surfaces, which is why this only appeared once the run moved
+        to CPU.
+
+        The fix is a cast at the boundary, NOT disabling the watermarker.
+        Stripping the AI-provenance mark off synthetic speech is not something
+        to do for convenience -- and there is a second reason to keep it: if
+        every attack clip carried a watermark and every bonafide clip did not,
+        the spoof detector could learn 'has watermark' instead of 'is
+        synthetic', and its recall would be measuring the wrong thing entirely.
+        Keeping the watermarker on both paths keeps that confound out.
+
+        *args/**kwargs deliberately: perth's signature differs across versions
+        and this wrapper must not care."""
+        import numpy as np
+
+        wm = getattr(self._model, "watermarker", None)
+        if wm is None or getattr(wm, "_fraudshield_f32_patch", False):
+            return
+        inner = wm.apply_watermark
+
+        def apply_watermark(wav, *args, **kwargs):
+            return inner(np.asarray(wav, dtype=np.float32), *args, **kwargs)
+
+        wm.apply_watermark = apply_watermark
+        wm._fraudshield_f32_patch = True
+
     def synthesize(self, text: str, speaker_wav_path: str | Path, out_path: str | Path) -> Path:
         """Clones the voice in speaker_wav_path reading `text`, writes a
         .wav to out_path. Used for BOTH generation modes above -- the only
         difference is which reference clip the caller passes in."""
+        import torch
         import torchaudio as ta
 
         self._ensure_loaded()
+        self._patch_watermarker_dtype()
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         wav = self._model.generate(text, audio_prompt_path=str(speaker_wav_path))
+
+        # Same dtype discipline on the way out: torchaudio.save writes whatever
+        # it is handed, and a float64 tensor here would produce a .wav that the
+        # spoof detector's loader reads differently from every other clip in
+        # the corpus -- a silent, per-file inconsistency in the evaluation set.
+        if torch.is_tensor(wav) and wav.dtype != torch.float32:
+            wav = wav.to(torch.float32)
         ta.save(str(out_path), wav, self._model.sr)
         return out_path

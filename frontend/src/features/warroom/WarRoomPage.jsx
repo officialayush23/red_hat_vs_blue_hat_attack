@@ -9,6 +9,8 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { AttackStream, StreamLegend } from "@/components/warroom/AttackStream";
+import { ResizeHandle } from "@/components/shared/ResizablePanel";
+import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { AgentStepList } from "@/components/shared/AgentStepList";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -77,6 +79,22 @@ export function WarRoomPage() {
   const currentStep = steps?.find((s) => s.status === "running") ?? steps?.[stepCount - 1];
   const elapsed = useElapsed(run?.createdAt, run?.completedAt, isRunning);
 
+  // 380px was the old hard-coded rail. Kept as the default so nobody's layout
+  // changes until they drag it; the bounds stop the stream or the rail being
+  // dragged down to a useless sliver.
+  const {
+    containerRef: railRef,
+    containerStyle: railStyle,
+    handleProps: railHandleProps,
+  } = useResizablePanel({
+    storageKey: "fraudshield.warroom.railWidth",
+    cssVar: "--warroom-rail",
+    defaultWidth: 380,
+    minWidth: 300,
+    maxWidth: 640,
+    side: "right",
+  });
+
   const laneCounts = useMemo(() => {
     const c = { blocked: 0, missed: 0, cleared: 0, false_positive: 0 };
     for (const row of cases ?? []) c[row.outcome] += 1;
@@ -132,9 +150,19 @@ export function WarRoomPage() {
         <span className="hidden font-mono text-[11px] text-muted-foreground lg:inline">{runId}</span>
       </header>
 
-      {/* ---- Main grid ---- */}
-      <div className="grid flex-1 gap-4 p-4 md:p-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="flex min-w-0 flex-col gap-4">
+      {/* ---- Main grid ----
+           The agent rail used to be a hard 380px. On a 1280px laptop that left
+           the attack stream barely wider than the rail; on an ultrawide it was
+           a ribbon against acres of empty chart. The width is a real preference
+           now, driven by a CSS custom property so dragging it does not
+           re-render the stream on every pointermove. Below xl the layout stacks
+           and the variable is simply unused. */}
+      <div
+        ref={railRef}
+        style={railStyle}
+        className="grid flex-1 gap-4 p-4 md:p-6 xl:grid-cols-[minmax(0,1fr)_auto_var(--warroom-rail)] xl:gap-0 xl:gap-y-4"
+      >
+        <div className="flex min-w-0 flex-col gap-4 xl:pr-4">
           <AttackStream cases={cases ?? []} live={runningOrWaiting} height={460} />
 
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -223,8 +251,10 @@ export function WarRoomPage() {
           </div>
         </div>
 
+        <ResizeHandle {...railHandleProps} label="Resize the agent rail" />
+
         {/* ---- Agent rail ---- */}
-        <aside className="flex min-w-0 flex-col gap-4">
+        <aside className="flex min-w-0 flex-col gap-4 xl:pl-4">
           <div className="rounded-2xl border p-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
@@ -253,7 +283,7 @@ export function WarRoomPage() {
                 Agent decision trace
               </p>
             </div>
-            <ScrollArea className="h-[520px] px-1 py-2">
+            <ScrollArea className="h-[420px] px-1 py-2 xl:h-auto xl:min-h-[320px] xl:flex-1">
               {steps?.length ? (
                 <AgentStepList steps={steps} />
               ) : (
