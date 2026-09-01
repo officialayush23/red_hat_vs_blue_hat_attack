@@ -45,6 +45,30 @@ is not. Callers declare this per run via score_is_probability.
 A caller that claims score_is_probability while passing a value outside
 [0, 1] now raises instead of silently multiplying by 100 -- the silence is
 what let this run for weeks.
+
+2026-09-01 -- GHOST RUNS, and why the run row is now written LAST.
+
+Ten of the twenty most recent evaluation_runs rows carried status
+`completed` and ZERO evaluation_results rows -- including all four held-out
+tabular models (xgboost, lightgbm, autoencoder, fusion, n=2000 each). Three
+defects lined up:
+
+  1. This function inserted the evaluation_runs row BEFORE building or
+     inserting any result row, and hard-coded status "completed" at that
+     moment. Anything that failed afterwards left a run that claims success.
+  2. Every caller wraps the persistence block in `except Exception` and
+     prints "skipped (non-fatal)" to stderr -- which Colab does not surface.
+  3. The failure itself: case_id is minted as `uuid4().hex[:12]`
+     (artifact_generators/transaction_gen.py:91), so regenerating the
+     dataset produces case_ids that share nothing with the previous
+     generation. data/processed/attacks_held_out.parquet was rewritten at
+     05:57; attack_cases had last been backfilled at 05:22. A 25-id probe of
+     that parquet against attack_cases found 0 of 25 present. The FK
+     rejected all 2000, ten times over, for four models.
+
+So: rows are built and pre-flight-checked first, the run row is inserted as
+`running`, and it is marked `completed` only once every batch has landed --
+`failed` otherwise. A run in this table now means what it says.
 """
 
 from datetime import datetime, timezone
@@ -79,16 +103,11 @@ def record_run_and_results(
     docstring for why no rescale is applied instead."""
     if score_is_probability is None:
         score_is_probability = model_name in PROBABILITY_SCORED_MODELS
-    now = datetime.now(timezone.utc).isoformat()
-    run_resp = client.table("evaluation_runs").insert({
-        "run_type": run_type,
-        "config": {"model": model_name, "n_cases": len(cases)},
-        "status": "completed",
-        "started_at": now,
-        "finished_at": now,
-    }).execute()
-    run_id = run_resp.data[0]["id"]
 
+    # The evaluation_runs row is created LAST, not first. See the module
+    # docstring's "GHOST RUNS" note: inserting it up front is what let ten
+    # of the last twenty runs sit in the dashboard as `completed` while
+    # holding zero result rows.
     rows = []
     for c in cases:
         score = float(c["score"])
@@ -121,7 +140,7 @@ def record_run_and_results(
             )
 
         rows.append({
-            "run_id": run_id,
+            # run_id filled in after the pre-flight check, below
             "case_id": c["case_id"],
             "model_signals": [{"model": model_name, "score": score}],
             "fused_risk_score": fused,
@@ -135,7 +154,75 @@ def record_run_and_results(
             "evidence": evidence,
         })
 
-    for i in range(0, len(rows), batch_size):
-        client.table("evaluation_results").insert(rows[i:i + batch_size]).execute()
+    # PRE-FLIGHT: every case_id must already exist in attack_cases, because
+    # evaluation_results.case_id has a hard FK to it. When it does not, the
+    # insert fails wholesale, every caller catches it as "non-fatal", and the
+    # only trace is a stderr line Colab never showed. The check below turns
+    # that into one sentence naming the actual cause.
+    _assert_cases_exist(client, [r["case_id"] for r in rows], model_name)
+
+    now = datetime.now(timezone.utc).isoformat()
+    run_resp = client.table("evaluation_runs").insert({
+        "run_type": run_type,
+        "config": {"model": model_name, "n_cases": len(cases)},
+        "status": "running",
+        "started_at": now,
+    }).execute()
+    run_id = run_resp.data[0]["id"]
+    for r in rows:
+        r["run_id"] = run_id
+
+    try:
+        for i in range(0, len(rows), batch_size):
+            client.table("evaluation_results").insert(rows[i:i + batch_size]).execute()
+    except Exception:
+        # A run that persisted nothing must never read as `completed`. The
+        # row is left behind deliberately rather than deleted -- a failed
+        # attempt is itself part of the record -- but it is labelled for
+        # what it is, so no dashboard aggregate can silently include it.
+        try:
+            client.table("evaluation_runs").update(
+                {"status": "failed", "finished_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("id", run_id).execute()
+        except Exception:
+            pass
+        raise
+
+    client.table("evaluation_runs").update(
+        {"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", run_id).execute()
 
     return run_id
+
+
+def _assert_cases_exist(client, case_ids: list, model_name: str, probe: int = 40) -> None:
+    """Sample-probe attack_cases before writing anything.
+
+    A full membership check would be one request per 1000 ids (PostgREST's
+    response cap) on a 2000-case held-out set. A sample is enough because
+    the failure this catches is never partial: case_id is minted as
+    `uuid4().hex[:12]` in artifact_generators/transaction_gen.py, so a
+    regenerated dataset shares NO ids with the previous one. Either the
+    backfill has seen this generation or it has seen none of it.
+    """
+    if not case_ids:
+        return
+    seen = sorted(set(case_ids))
+    step = max(1, len(seen) // probe)
+    sample = seen[::step][:probe]
+
+    resp = client.table("attack_cases").select("id").in_("id", sample).execute()
+    found = {r["id"] for r in (resp.data or [])}
+    missing = [c for c in sample if c not in found]
+    if not missing:
+        return
+
+    raise RuntimeError(
+        f"{model_name}: {len(missing)} of {len(sample)} probed case_ids are absent from "
+        f"attack_cases, e.g. {missing[0]}. evaluation_results.case_id is a foreign key, so "
+        "EVERY insert would be rejected and this run would persist zero rows.\n\n"
+        "Cause: case_id is uuid4().hex[:12], minted fresh on every generation. The dataset "
+        "on disk was regenerated after the last backfill, so its ids are new and Supabase "
+        "still holds the previous generation's.\n\n"
+        "Fix: python generate/run_all_generation.py --only backfill_attack_cases,backfill_phase2_artifacts"
+    )

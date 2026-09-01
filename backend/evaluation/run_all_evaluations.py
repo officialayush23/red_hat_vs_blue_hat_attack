@@ -68,6 +68,23 @@ EVAL_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = EVAL_DIR.parent
 METRICS_JSON = BACKEND_DIR / "defend" / "models" / "metrics.json"
 
+# 2026-09-01: backfill runs FIRST, before any evaluation.
+#
+# evaluation_results.case_id is a foreign key into attack_cases, and case_id
+# is minted as uuid4().hex[:12] (artifact_generators/transaction_gen.py) --
+# so regenerating the dataset produces ids that share NOTHING with the
+# generation Supabase currently holds. On 2026-09-01 the held-out parquet
+# was rewritten at 05:57 while attack_cases had last been loaded at 05:22;
+# a 25-id probe found 0 of 25 present, and the four held-out models each
+# persisted zero rows while reporting `completed`. Ten ghost runs in total.
+#
+# Making the loader the first step costs one idempotent upsert pass and
+# removes the whole class of failure: whatever is on disk is in the table
+# before anything tries to reference it. It is NOT in STEP_NAMES, so
+# --only still selects evaluations by name and never accidentally skips it.
+PRELUDE = ("backfill_cases", "../generate/run_all_generation.py",
+           ["--only", "backfill_attack_cases,backfill_phase2_artifacts"])
+
 STEPS = [
     ("voice_spoof", "eval_voice_spoof.py"),
     ("document_consistency", "eval_document_consistency.py"),
@@ -143,8 +160,8 @@ def _interpreter_for(name: str) -> str:
     return sys.executable
 
 
-def _run_one(name: str, script: str, timeout: int) -> dict:
-    script_path = EVAL_DIR / script
+def _run_one(name: str, script: str, timeout: int, extra_args: "list | None" = None) -> dict:
+    script_path = (EVAL_DIR / script).resolve()
     t0 = time.monotonic()
     if not script_path.exists():
         return {"name": name, "script": script, "ok": False, "seconds": 0.0,
@@ -152,7 +169,7 @@ def _run_one(name: str, script: str, timeout: int) -> dict:
     interpreter = _interpreter_for(name)
     try:
         proc = subprocess.run(
-            [interpreter, str(script_path)],
+            [interpreter, str(script_path), *(extra_args or [])],
             cwd=str(BACKEND_DIR), capture_output=True, text=True, timeout=timeout,
         )
         dt = time.monotonic() - t0
@@ -172,7 +189,24 @@ def _run_one(name: str, script: str, timeout: int) -> dict:
 
 def run_all(only: "set | None" = None, timeout: int = 1800, on_step=None) -> list:
     steps = STEPS if not only else [s for s in STEPS if s[0] in only]
-    results = []
+
+    # The prelude is not optional and not selectable: without it, any eval
+    # whose cases were regenerated since the last load persists zero rows
+    # while reporting success. Its failure is reported but does NOT abort --
+    # the evaluations still produce real metrics.json numbers, they just
+    # won't reach Supabase, and each eval now says so loudly on stdout.
+    pre_name, pre_script, pre_args = PRELUDE
+    print(f"\n=== {pre_name} ({pre_script}) ===", flush=True)
+    pre = _run_one(pre_name, pre_script, timeout, pre_args)
+    print(f"--- {pre_name}: {'OK' if pre['ok'] else 'FAILED'} ({pre['seconds']}s) ---", flush=True)
+    if not pre["ok"]:
+        print(pre["tail"], flush=True)
+        print("  !! attack_cases was NOT refreshed. Any evaluation whose cases were "
+              "regenerated since the last load will persist ZERO rows to Supabase "
+              "(evaluation_results.case_id is a foreign key). metrics.json will still "
+              "be correct.", flush=True)
+
+    results = [pre]
     for name, script in steps:
         print(f"\n=== {name} ({script}) ===", flush=True)
         result = _run_one(name, script, timeout)

@@ -239,6 +239,18 @@ def _persist_to_supabase(model_name: str, threshold: float, held_out_df, held_sc
         print(f"  Supabase: evaluation_run {run_id} (adversarial_held_out, {len(cases)} per-case results, "
               f"{model_name})")
     except Exception as exc:
+        # 2026-09-01: this branch fired silently for four models x two runs.
+        # The held-out parquet was regenerated at 05:57, attack_cases was last
+        # backfilled at 05:22, and case_id is uuid4().hex[:12] -- so not one of
+        # the 2000 scored ids existed in attack_cases and the FK rejected every
+        # batch. The only trace was this stderr line, inside a subprocess whose
+        # stderr Colab never surfaced. It is a stdout banner now.
+        print("\n  !! SUPABASE PERSISTENCE FAILED -- metrics.json / EVALUATION_RESULTS.md were "
+              "still written, but NO per-case rows reached the database.", flush=True)
+        print(f"  !! {type(exc).__name__}: {exc}", flush=True)
+        print("  !! Fix: python generate/run_all_generation.py "
+              "--only backfill_attack_cases,backfill_phase2_artifacts   (then re-run this eval)",
+              flush=True)
         print(f"  Supabase per-case persistence skipped (non-fatal): {exc}", file=sys.stderr)
 
 
