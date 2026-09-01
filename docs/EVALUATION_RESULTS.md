@@ -773,3 +773,108 @@ n_bonafide=100 (self-generated, negative control -- see script docstring). 'over
 - Reason: The autoencoder relies on reconstruction error to flag anomalies, but already exhibits a low recall of 0.43 under off-hours and moderate velocity conditions.; Lowering the velocity to 'low' and moving the time to 'business_hours' significantly reduces the statistical anomaly footprint, likely decreasing reconstruction error and allowing stealthier fraudulent transactions to bypass detection.
 - After (round 2, 200 new rows / 200 cases): recall=0.3150, precision=0.0485, roc_auc=0.9923
 - Delta: -0.1150
+
+## voice_spoof_detector (garystafford/wav2vec2-deepfake-voice-detector) -- Principle 11 evidence-gate run
+
+- Decision threshold: 0.9760 (best_f1_threshold on bonafide + train-split spoof only, then applied unchanged to held_out -- same calibrate-on-train/apply-to-held_out pattern as run_adversarial_eval.py's frozen tabular thresholds, not re-picked on held_out)
+- Precision: 0.8701
+- Recall: 0.8171
+- F1: 0.8428
+- ROC-AUC: 0.9056
+- PR-AUC: 0.9248
+- False positive rate (bonafide flagged as spoof): 11.9048%
+- n_bonafide=84 (LibriSpeech sample -- small-N caveat, see script docstring), n_spoof=82
+- train split recall: 0.8333 (n=42)
+- held_out split recall: 0.8000 (n=40)
+
+## video_kyc_detector (facenet-pytorch MTCNN + InceptionResnetV1/VGGFace2) -- Principle 11 evidence-gate run
+
+- Decision threshold: 0.4811 (best_f1_threshold on train-split cases only, then applied unchanged to held_out)
+- n_cases=12 (dataset still growing -- see script docstring)
+- Precision: 1.0000
+- Recall: 1.0000
+- F1: 1.0000
+- ROC-AUC: 1.0000
+- PR-AUC: 1.0000
+- False positive rate (bonafide flagged as impersonation): 0.0000%
+- train split (n=8, n_positive=4): recall=1.0000, precision=1.0000
+- held_out split (n=4, n_positive=2): recall=1.0000, precision=1.0000
+
+## phishing_classifier (TF-IDF + intent/URL features + LogisticRegression) -- Principle 11 evidence-gate run
+
+n_bonafide=200 (self-generated, negative control -- see script docstring). 'overall' = bonafide vs. all generated phishing cases; 'train' / 'held_out' = bonafide vs. just that split's phishing cases (bonafide is the shared negative class in every column, so a bare per-column precision/recall on bonafide alone isn't mathematically meaningful).
+
+| Metric | overall | train | held-out |
+|---|---|---|---|
+| Precision | 0.8824 | 0.8108 | 0.7627 |
+| Recall | 0.8750 | 1.0000 | 0.7500 |
+| F1 | 0.8787 | 0.8955 | 0.7563 |
+| ROC-AUC | 0.8416 | 0.9895 | 0.6937 |
+| PR-AUC | 0.9508 | 0.9932 | 0.8097 |
+| FPR (bonafide flagged as phishing) | 35.00% | 35.00% | 35.00% |
+| n_positive (phishing cases in this column) | 600 | 300 | 300 |
+
+- Caveat: classifier trains only on real difraud/difraud text (Stage 5); this scores it against our own generated phishing_scam artifacts it has never seen -- a genuine generalization test, not a data-leakage-inflated number.
+
+## fusion (XGBoost + LightGBM + Autoencoder, weighted by real Stage-5 ROC-AUC) -- Section 6 evidence gate, held-out combinations
+
+- Weights: xgboost=0.3387, lightgbm=0.3388, autoencoder=0.3225
+- Threshold: 0.6756 (picked on Stage-5 validation's fused scores, not on held-out data itself)
+- Precision: 0.9621
+- Recall: 1.0000
+- F1: 0.9807
+- ROC-AUC: 1.0000
+- PR-AUC: 0.9994
+- False positive rate: 0.0228%
+- n_legit=1384857, n_fraud=8025 (held-out combinations, transaction-row granularity)
+- transaction_fraud recall: 1.0000 (n_fraud_rows=1200)
+- account_takeover recall: 1.0000 (n_fraud_rows=1600)
+- synthetic_identity recall: 1.0000 (n_fraud_rows=2400)
+- mule_network recall: 1.0000 (n_fraud_rows=2825)
+- Compare against the individual xgboost_adversarial_eval / lightgbm_adversarial_eval / autoencoder_adversarial_eval sections above -- same held-out rows, same legit baseline, so this is a fair apples-to-apples fusion-vs-best-single-model comparison.
+- Scope: weighted multi-model combination only. Customer-behavior corroboration (defend.fusion.behavioral_adjustment) is NOT exercised here -- no real customer_id linkage exists yet for generated cases (Phase 2.5). See defend/fusion.py.
+
+## xgboost -- Section 8 adversarial evaluation (Stage 7, frozen model, held-out combinations)
+
+- Precision: 0.9565
+- Recall: 0.8713
+- F1: 0.9119
+- ROC-AUC: 0.9987
+- PR-AUC: 0.9262
+- False positive rate (against Stage-5 validation-split legit rows): 0.0230%
+- n_legit=1384857, n_fraud=8025 (held-out combinations only, transaction-row granularity)
+- transaction_fraud recall: 1.0000 (n_fraud_rows=1200)
+- account_takeover recall: 1.0000 (n_fraud_rows=1600)
+- synthetic_identity recall: 0.9133 (n_fraud_rows=2400)
+- mule_network recall: 0.7080 (n_fraud_rows=2825)
+- Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.
+
+## lightgbm -- Section 8 adversarial evaluation (Stage 7, frozen model, held-out combinations)
+
+- Precision: 0.9447
+- Recall: 1.0000
+- F1: 0.9715
+- ROC-AUC: 1.0000
+- PR-AUC: 1.0000
+- False positive rate (against Stage-5 validation-split legit rows): 0.0339%
+- n_legit=1384857, n_fraud=8025 (held-out combinations only, transaction-row granularity)
+- transaction_fraud recall: 1.0000 (n_fraud_rows=1200)
+- account_takeover recall: 1.0000 (n_fraud_rows=1600)
+- synthetic_identity recall: 1.0000 (n_fraud_rows=2400)
+- mule_network recall: 1.0000 (n_fraud_rows=2825)
+- Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.
+
+## autoencoder -- Section 8 adversarial evaluation (Stage 7, frozen model, held-out combinations)
+
+- Precision: 0.8417
+- Recall: 0.8196
+- F1: 0.8305
+- ROC-AUC: 0.9991
+- PR-AUC: 0.9166
+- False positive rate (against Stage-5 validation-split legit rows): 0.0893%
+- n_legit=1384857, n_fraud=8025 (held-out combinations only, transaction-row granularity)
+- transaction_fraud recall: 0.4300 (n_fraud_rows=1200)
+- account_takeover recall: 0.5225 (n_fraud_rows=1600)
+- synthetic_identity recall: 1.0000 (n_fraud_rows=2400)
+- mule_network recall: 1.0000 (n_fraud_rows=2825)
+- Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.
