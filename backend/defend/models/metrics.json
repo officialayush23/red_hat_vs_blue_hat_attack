@@ -183,26 +183,26 @@
   "xgboost_adversarial_eval": {
     "metrics": {
       "threshold": 0.9825477004051208,
-      "precision": 0.9564979480164159,
-      "recall": 0.8712772585669782,
-      "f1": 0.9119008803390936,
-      "roc_auc": 0.9987276322289376,
-      "pr_auc": 0.9261515449107424,
-      "false_positive_rate": 0.00022962659682552062,
-      "n_samples": 1392882,
-      "n_positive": 8025,
-      "true_positives": 6992,
+      "precision": 0.9648967877249145,
+      "recall": 0.8752378091518974,
+      "f1": 0.9178830200567049,
+      "roc_auc": 0.9987947400758761,
+      "pr_auc": 0.9351656301973847,
+      "false_positive_rate": 0.00022962643101314358,
+      "n_samples": 1394845,
+      "n_positive": 9987,
+      "true_positives": 8741,
       "false_positives": 318,
-      "true_negatives": 1384539,
-      "false_negatives": 1033
+      "true_negatives": 1384540,
+      "false_negatives": 1246
     },
-    "n_legit": 1384857,
-    "n_fraud": 8025,
+    "n_legit": 1384858,
+    "n_fraud": 9987,
     "per_family_recall": {
       "transaction_fraud": 1.0,
       "account_takeover": 1.0,
-      "synthetic_identity": 0.9133333333333333,
-      "mule_network": 0.7079646017699115
+      "synthetic_identity": 0.9136666666666666,
+      "mule_network": 0.7169486664754804
     },
     "decision_threshold_reused_from_stage5": 0.9825477004051208,
     "note": "Section 8 step 4 -- frozen model, held-out combinations it never trained on (evaluation/split_policy.py's held_out_only buckets)."
@@ -210,21 +210,21 @@
   "lightgbm_adversarial_eval": {
     "metrics": {
       "threshold": 0.9813934091626603,
-      "precision": 0.9446733372572101,
+      "precision": 0.9550540307927704,
       "recall": 1.0,
-      "f1": 0.9715496368038741,
+      "f1": 0.9770103697906476,
       "roc_auc": 1.0,
       "pr_auc": 1.0,
-      "false_positive_rate": 0.00033938522172325373,
-      "n_samples": 1392882,
-      "n_positive": 8025,
-      "true_positives": 8025,
+      "false_positive_rate": 0.0003393849766546462,
+      "n_samples": 1394845,
+      "n_positive": 9987,
+      "true_positives": 9987,
       "false_positives": 470,
-      "true_negatives": 1384387,
+      "true_negatives": 1384388,
       "false_negatives": 0
     },
-    "n_legit": 1384857,
-    "n_fraud": 8025,
+    "n_legit": 1384858,
+    "n_fraud": 9987,
     "per_family_recall": {
       "transaction_fraud": 1.0,
       "account_takeover": 1.0,
@@ -237,24 +237,24 @@
   "autoencoder_adversarial_eval": {
     "metrics": {
       "threshold": 0.11958900839090347,
-      "precision": 0.8416943946762222,
-      "recall": 0.8195638629283489,
-      "f1": 0.8304817223309552,
-      "roc_auc": 0.9991216222765665,
-      "pr_auc": 0.916639401155352,
-      "false_positive_rate": 0.0008932330197269465,
-      "n_samples": 1392882,
-      "n_positive": 8025,
-      "true_positives": 6577,
+      "precision": 0.8696247892074199,
+      "recall": 0.8261740262341043,
+      "f1": 0.8473427471116817,
+      "roc_auc": 0.9991270811308574,
+      "pr_auc": 0.9281003617046396,
+      "false_positive_rate": 0.0008932323747272284,
+      "n_samples": 1394845,
+      "n_positive": 9987,
+      "true_positives": 8251,
       "false_positives": 1237,
-      "true_negatives": 1383620,
-      "false_negatives": 1448
+      "true_negatives": 1383621,
+      "false_negatives": 1736
     },
-    "n_legit": 1384857,
-    "n_fraud": 8025,
+    "n_legit": 1384858,
+    "n_fraud": 9987,
     "per_family_recall": {
-      "transaction_fraud": 0.43,
-      "account_takeover": 0.5225,
+      "transaction_fraud": 0.434,
+      "account_takeover": 0.5565,
       "synthetic_identity": 1.0,
       "mule_network": 1.0
     },
@@ -264,17 +264,17 @@
   "fusion_adversarial_eval": {
     "metrics": {
       "threshold": 0.6756013316780785,
-      "precision": 0.9621148543340127,
+      "precision": 0.9693293215568282,
       "recall": 1.0,
-      "f1": 0.9806916778687523,
-      "roc_auc": 0.9999972637727295,
-      "pr_auc": 0.9993510553608084,
-      "false_positive_rate": 0.0002281824043926557,
-      "n_samples": 1392882,
-      "n_positive": 8025,
-      "true_positives": 8025,
+      "f1": 0.9844258255298176,
+      "roc_auc": 0.9999972878210058,
+      "pr_auc": 0.9994862395980303,
+      "false_positive_rate": 0.0002281822396231238,
+      "n_samples": 1394845,
+      "n_positive": 9987,
+      "true_positives": 9987,
       "false_positives": 316,
-      "true_negatives": 1384541,
+      "true_negatives": 1384542,
       "false_negatives": 0
     },
     "weights": {
@@ -283,8 +283,8 @@
       "autoencoder": 0.32245798592449426
     },
     "threshold_source": "Stage-5 validation fused scores (best_f1_threshold), not held-out data",
-    "n_legit": 1384857,
-    "n_fraud": 8025,
+    "n_legit": 1384858,
+    "n_fraud": 9987,
     "per_family_recall": {
       "transaction_fraud": 1.0,
       "account_takeover": 1.0,
@@ -440,5 +440,52 @@
     "held_out_recall": 1.0,
     "train_recall": 1.0,
     "note": "pretrained face-embedding inference (facenet-pytorch, MTCNN+InceptionResnetV1/VGGFace2), no training -- evidence-gate run per Principle 11. Dataset is incrementally generated (see generate_video_kyc_attacks.py); this run's n_cases reflects the media available at run time, not a final fixed set. Threshold calibrated via best_f1_threshold on train-split cases only."
+  },
+  "behavioral_adjustment_baseline": {
+    "metrics": {
+      "threshold": 30.0,
+      "precision": 0.018364292469721873,
+      "recall": 1.0,
+      "f1": 0.036066253708061706,
+      "roc_auc": 0.9999999999999999,
+      "pr_auc": 1.0,
+      "false_positive_rate": 0.07719708446642183,
+      "n_samples": 1386858,
+      "n_positive": 2000,
+      "true_positives": 2000,
+      "false_positives": 106907,
+      "true_negatives": 1277951,
+      "false_negatives": 0
+    },
+    "threshold": 30.0,
+    "n_fraud_rows": 2000,
+    "n_customer_linked_rows": 2000,
+    "n_legit_rows": 1384858,
+    "note": "fused (XGBoost+LightGBM) score alone, no behavioral corroboration -- Principle 11 evidence-gate run, account_takeover held-out."
+  },
+  "behavioral_adjustment_adjusted": {
+    "metrics": {
+      "threshold": 30.0,
+      "precision": 0.018364292469721873,
+      "recall": 1.0,
+      "f1": 0.036066253708061706,
+      "roc_auc": 0.9999999999999999,
+      "pr_auc": 1.0,
+      "false_positive_rate": 0.07719708446642183,
+      "n_samples": 1386858,
+      "n_positive": 2000,
+      "true_positives": 2000,
+      "false_positives": 106907,
+      "true_negatives": 1277951,
+      "false_negatives": 0
+    },
+    "threshold": 30.0,
+    "n_fraud_rows": 2000,
+    "n_customer_linked_rows": 2000,
+    "n_legit_rows": 1384858,
+    "n_corroborated": 0,
+    "n_discounted": 0,
+    "n_unchanged": 2000,
+    "note": "fused score + defend/fusion.py's behavioral_adjustment() using each case's real customer_id + behavior_baseline -- Principle 11 evidence-gate run, account_takeover held-out. Compare against behavioral_adjustment_baseline for the same rows/threshold."
   }
 }
