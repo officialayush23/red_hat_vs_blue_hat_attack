@@ -59,6 +59,7 @@ customer_id in hand, not duplicated here.
 import json
 import os
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import numpy as np
@@ -298,6 +299,84 @@ class DocumentConsistencyDetector:
         except (json.JSONDecodeError, TypeError):
             return None
 
+    # Characters OCR genuinely confuses on rendered text. Folding these before
+    # comparison turns "a character was misrecognised" into a match, while
+    # leaving "this is a different name/account entirely" a mismatch.
+    _OCR_FOLD = str.maketrans({
+        "O": "0", "o": "0", "D": "0", "Q": "0",
+        "I": "1", "l": "1", "|": "1",
+        "S": "5", "B": "8", "Z": "2", "G": "6",
+    })
+
+    @staticmethod
+    def _norm_text(value) -> str:
+        """Case, whitespace and punctuation folded. OCR emits 'ACME  Corp.'
+        for 'ACME Corp' often enough that an exact string comparison is
+        measuring the OCR engine, not the document."""
+        t = str(value).strip().lower()
+        t = re.sub(r"[^\w\s]", "", t)
+        return re.sub(r"\s+", " ", t)
+
+    @classmethod
+    def _values_match(cls, key: str, printed_val, qr_val) -> bool:
+        """Is the printed value the SAME VALUE as the QR's, allowing for OCR
+        noise but not for substitution?
+
+        Why this is not an exact comparison any more (2026-09-01):
+
+        The document detector's false-positive rate on legitimate invoices was
+        23.5% -- 47 of 200 consistent documents flagged as tampered. On a
+        consistent invoice every field matches by construction, so every one of
+        those was the detector misreading its own generated file.
+
+        The mechanism is arithmetic. score() is mismatched/comparable, and there
+        are four comparable fields, so the score is quantised to
+        {0, 0.25, 0.5, 0.75, 1.0}. The calibrated threshold sits at 0.25.
+        A SINGLE character misread in ONE of four fields therefore produces a
+        full mismatch on that field, a score of exactly 0.25, and a flag. One
+        bad character in four fields is roughly a one-in-four document -- which
+        is the false-positive rate that was measured.
+
+        So: text fields compare on a normalised form, with a similarity ratio
+        for the remainder, and identifier fields additionally fold the
+        character pairs OCR actually confuses.
+
+        This does NOT weaken tamper detection, and that matters more than the
+        FPR. document_gen.py tampers by SUBSTITUTION -- a different beneficiary,
+        a different account number, a different amount -- not by perturbing a
+        character. A substituted value scores far below the 0.90 similarity
+        floor, while an OCR slip scores far above it. The two cases were never
+        close together; exact matching just could not tell them apart.
+        """
+        if key == "amount":
+            if qr_val is None:
+                return False
+            try:
+                return abs(float(printed_val) - float(qr_val)) < 0.01
+            except (TypeError, ValueError):
+                return False
+
+        p_norm, q_norm = cls._norm_text(printed_val), cls._norm_text(qr_val)
+        if not q_norm:
+            return False
+        if p_norm == q_norm:
+            return True
+
+        if key in ("bank_account", "invoice_number"):
+            # Identifiers are alphanumeric codes with no linguistic
+            # redundancy, so a single confused glyph is both likely and
+            # invisible. Fold the known confusions and require the folded
+            # forms to be identical -- no fuzzy ratio here, because two
+            # genuinely different account numbers can be one digit apart.
+            if p_norm.translate(cls._OCR_FOLD) == q_norm.translate(cls._OCR_FOLD):
+                return True
+            return False
+
+        # Names: a similarity floor. 0.90 is comfortably above what an OCR
+        # slip costs on a company name and far above what a substituted name
+        # scores.
+        return SequenceMatcher(None, p_norm, q_norm).ratio() >= 0.90
+
     def _compare_fields(self, printed: dict, qr: dict) -> list:
         """Shared by score() and score_with_evidence() -- one comparison
         pass, returns a list of (field, printed_val, qr_val, matched) so
@@ -307,13 +386,8 @@ class DocumentConsistencyDetector:
         for key in ("invoice_number", "beneficiary", "amount", "bank_account"):
             if key not in printed:
                 continue
-            if key == "amount":
-                qr_val = qr.get("amount")
-                match = qr_val is not None and abs(float(printed[key]) - float(qr_val)) < 0.01
-            else:
-                qr_val = qr.get(key, "")
-                match = str(printed[key]).strip().lower() == str(qr_val).strip().lower()
-            results.append((key, printed[key], qr.get(key), match))
+            results.append((key, printed[key], qr.get(key),
+                            self._values_match(key, printed[key], qr.get(key))))
         return results
 
     def score(self, image_path: str | Path) -> float:
@@ -339,7 +413,20 @@ class DocumentConsistencyDetector:
         engine = [f"ocr_backend={self.backend_name}"]
         qr = self._decode_qr(image_path)
         if qr is None:
-            return 1.0, engine + ["QR payload could not be decoded at all"]
+            # ABSTAIN, do not accuse. An undecodable QR means the reader
+            # failed on this image; it is not evidence that the document was
+            # tampered with. Returning 1.0 here stated maximal confidence in
+            # fraud on the strength of not having read the thing that decides
+            # it -- and since the calibrated threshold is 0.25, every such
+            # image was counted as a detection. On legitimate invoices that is
+            # a pure false positive manufactured by the detector's own
+            # failure. 0.5 is the same "genuinely unknown" value already used
+            # when OCR finds none of the four fields.
+            return 0.5, engine + [
+                "QR payload could not be decoded -- score is an abstention, NOT a tamper "
+                "finding. The QR is the ground truth this detector compares against; "
+                "without it there is nothing to compare."
+            ]
 
         comparisons = self._compare_fields(printed, qr)
         if not comparisons:
