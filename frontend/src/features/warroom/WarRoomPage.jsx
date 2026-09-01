@@ -193,7 +193,7 @@ export function WarRoomPage() {
                     </span>
                     <span className="min-w-0 flex-1 truncate">{row.familyLabel}</span>
                     <span className="w-14 shrink-0 text-right font-medium tabular-nums">
-                      {row.riskScore.toFixed(1)}
+                      {row.riskScore === null ? "—" : row.riskScore.toFixed(1)}
                     </span>
                     <span className="hidden w-20 shrink-0 text-right text-muted-foreground uppercase sm:inline">
                       {row.decision}

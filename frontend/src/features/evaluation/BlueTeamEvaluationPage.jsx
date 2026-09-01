@@ -52,7 +52,7 @@ export function BlueTeamEvaluationPage() {
                         <DecisionBadge decision={c.decision} />
                       </div>
                       <span className="text-xs text-muted-foreground tabular-nums">
-                        Fused risk {(c.fusedRiskScore * 100).toFixed(0)}%
+                        {c.fusedRiskScore === null ? "Risk not on the 0-100 scale" : `Fused risk ${(c.fusedRiskScore * 100).toFixed(0)}%`}
                       </span>
                     </button>)}
                 </div>
@@ -124,7 +124,7 @@ function EvaluationPipeline({
           <div>
             <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Final risk score</p>
             <p className="cn-font-heading text-4xl font-semibold tabular-nums text-foreground">
-              {(evalCase.fusedRiskScore * 100).toFixed(0)}%
+              {evalCase.fusedRiskScore === null ? "n/a" : `${(evalCase.fusedRiskScore * 100).toFixed(0)}%`}
             </p>
             <p className="text-xs text-muted-foreground">
               Weighted fusion across {evalCase.modelSignals.length} modality signals

@@ -30,7 +30,7 @@ export async function listEvaluationCases(runId, limit = 12) {
     modelSignals: r.modelSignals.map((sig) => ({ model: sig.model, score: sig.score })),
     // Consumers render this as a percentage (x * 100); fused_risk_score is
     // persisted 0-100, so it is normalised here rather than at each call site.
-    fusedRiskScore: r.riskScore / 100,
+    fusedRiskScore: r.riskScore === null ? null : r.riskScore / 100,
     decision: r.decision,
     evidence: r.evidence,
     actualLabel: r.actualLabel,

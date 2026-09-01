@@ -52,7 +52,10 @@ function StreamDot({ row, topPct, index, speed }) {
   const h = hashOf(row.id ?? row.caseId ?? String(index));
   // Higher real risk score => faster approach. A 4.2s..9s spread keeps
   // lanes legible without any lane ever going empty.
-  const risk = Math.min(100, Math.max(0, row.riskScore)) / 100;
+  // A case with no calibrated risk score still has to travel at some
+  // speed; the midpoint is used and the tooltip says the score is absent,
+  // rather than treating "not measurable" as "zero risk".
+  const risk = Math.min(100, Math.max(0, row.riskScore ?? 50)) / 100;
   const duration = (9 - risk * 3.4) / speed;
   const delay = ((h % 1000) / 1000) * duration;
   const size = row.outcome === "cleared" ? "size-2" : "size-2.5";
@@ -87,7 +90,10 @@ function StreamDot({ row, topPct, index, speed }) {
         <dl className="space-y-0.5 text-[11px]">
           <Row label="Ground truth" value={row.actualLabel === "fraud" ? "Fraudulent" : "Legitimate"} />
           <Row label="Decision" value={String(row.decision ?? "—").toUpperCase()} />
-          <Row label="Fused risk" value={`${row.riskScore.toFixed(1)} / 100`} />
+          <Row
+            label="Fused risk"
+            value={row.riskScore === null ? "not on the 0-100 scale" : `${row.riskScore.toFixed(1)} / 100`}
+          />
           {row.splitPortion ? <Row label="Split" value={row.splitPortion} /> : null}
           {row.modelSignals.slice(0, 4).map((s) => (
             <Row

@@ -182,7 +182,7 @@ export async function getAttackCases(family, limit = 12) {
       result: r
         ? {
             modelSignals: Array.isArray(r.model_signals) ? r.model_signals : [],
-            riskScore: r.fused_risk_score ?? 0,
+            riskScore: typeof r.fused_risk_score === "number" ? r.fused_risk_score : null,
             decision: r.decision,
             detected: r.detected === true,
             actualLabel: r.actual_label,
@@ -203,7 +203,7 @@ export async function getRepresentativeCase(family) {
   if (!scored.length) return cases[0] ?? null;
   const miss = scored.find((c) => c.result.actualLabel === "fraud" && !c.result.detected);
   if (miss) return miss;
-  return scored.sort((a, b) => b.result.riskScore - a.result.riskScore)[0];
+  return scored.sort((a, b) => (b.result.riskScore ?? -1) - (a.result.riskScore ?? -1))[0];
 }
 
 // Real per-category totals for the dashboard breakdown chart, aggregated
@@ -305,12 +305,15 @@ export async function listScenarios() {
       let missed = 0;
       let falsePositives = 0;
       let scored = 0;
+      let riskScored = 0;
       let riskTotal = 0;
       for (const c of matched) {
         const r = bucket.latestByCase[c.id];
         if (!r) continue;
         scored += 1;
-        riskTotal += r.fused_risk_score ?? 0;
+        riskScored += 1;
+        if (typeof r.fused_risk_score === "number") riskTotal += r.fused_risk_score;
+        else riskScored -= 1;
         if (r.actual_label === "fraud") {
           if (r.detected) blocked += 1;
           else missed += 1;
@@ -327,7 +330,7 @@ export async function listScenarios() {
         blocked,
         missed,
         falsePositives,
-        avgRiskScore: scored ? riskTotal / scored : null,
+        avgRiskScore: riskScored > 0 ? riskTotal / riskScored : null,
         detectionRate: blocked + missed ? (blocked / (blocked + missed)) * 100 : null,
       };
     }),

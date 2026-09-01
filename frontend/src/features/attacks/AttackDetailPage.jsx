@@ -258,7 +258,7 @@ export function AttackDetailPage() {
                     <p className="font-mono text-[10px] break-all text-muted-foreground">{representative.id}</p>
                     <p className="text-xs text-muted-foreground">Fused risk score</p>
                     <p className="cn-font-heading text-2xl font-semibold tabular-nums">
-                      {result.riskScore.toFixed(1)} / 100
+                      {result.riskScore === null ? "n/a" : `${result.riskScore.toFixed(1)} / 100`}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-1.5">
@@ -342,7 +342,7 @@ export function AttackDetailPage() {
                   <TableCell className="font-mono text-[11px] break-all">{c.id}</TableCell>
                   <TableCell className="text-muted-foreground">{c.splitPortion ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {c.result ? c.result.riskScore.toFixed(1) : "—"}
+                    {c.result && c.result.riskScore !== null ? c.result.riskScore.toFixed(1) : "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground uppercase">{c.result?.decision ?? "—"}</TableCell>
                   <TableCell

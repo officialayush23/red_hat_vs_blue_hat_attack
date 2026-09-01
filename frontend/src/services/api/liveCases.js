@@ -91,8 +91,13 @@ function mapRow(result, caseRow) {
     family,
     familyLabel: FAMILY_LABEL[family] ?? family,
     category: FAMILY_TO_CATEGORY[family] ?? "transaction",
-    // fused_risk_score is persisted 0-100 by supabase_results.py.
-    riskScore: typeof result.fused_risk_score === "number" ? result.fused_risk_score : 0,
+    // fused_risk_score is persisted 0-100 by supabase_results.py -- but it
+    // is deliberately NULL for detectors whose score is not a calibrated
+    // probability (autoencoder reconstruction error, and the fusion score
+    // that includes it). Carried through as null, never coerced to 0: a
+    // zero would render as "no risk", the opposite of "not measurable on
+    // this scale".
+    riskScore: typeof result.fused_risk_score === "number" ? result.fused_risk_score : null,
     decision: result.decision,
     detected: result.detected === true,
     actualLabel: result.actual_label,
