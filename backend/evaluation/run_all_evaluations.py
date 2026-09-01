@@ -58,6 +58,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -82,7 +83,16 @@ STEP_NAMES = [name for name, _ in STEPS]
 # Step name -> venv directory name (relative to BACKEND_DIR). Only steps that
 # genuinely need a different interpreter than sys.executable go here -- see
 # module docstring's 2026-08-31 correction.
-VENV_OVERRIDES = {"document_consistency": "paddleocr_env"}
+# document_consistency only needs paddleocr_env when it is actually going
+# to use the paddlevl OCR backend. As of 2026-09-01 the detector's engine
+# is selectable (see defend/pretrained/document_consistency_detector.py)
+# and defaults to rapidocr, which installs into the main `red` venv with no
+# paddlepaddle at all -- routing that run into paddleocr_env would launch it
+# with an interpreter that has no rapidocr installed, and it would fail for
+# a reason unrelated to anything real.
+_DOC_OCR_BACKEND = os.environ.get("DOC_OCR_BACKEND", "").strip().lower()
+VENV_OVERRIDES = ({"document_consistency": "paddleocr_env"}
+                  if _DOC_OCR_BACKEND in ("", "paddlevl") else {})
 
 # Substring match against a failed step's combined stdout+stderr -> a one-line
 # fix. Cheap and worth it: the first real batch run hit both of these at once

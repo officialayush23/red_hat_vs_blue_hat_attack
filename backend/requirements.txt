@@ -54,7 +54,13 @@ soundfile>=0.12
 # opencv-python is listed explicitly because cv2.QRCodeDetector does the QR
 # half of the cross-check; it used to arrive transitively via paddleocr.
 rapidocr-onnxruntime>=1.3,<2  # pulls onnxruntime; keep numpy<2 above ahead of it when installing
-opencv-python>=4.9
+# opencv-python capped below 5.0: the 5.x wheels require numpy>=2, which
+# collides head-on with the numpy<2 that facenet-pytorch needs in this same
+# venv. Installing it unpinned on 2026-09-01 produced a pair of mutually
+# exclusive errors -- numpy 2 broke facenet, and pinning numpy back broke
+# opencv 5. 4.x satisfies both. Note the `red` venv may already provide cv2
+# via opencv-contrib-python 4.10, in which case this is a no-op.
+opencv-python>=4.9,<5
 
 # Phase 2 -- document_fraud generation only (Pillow/qrcode, lightweight).
 # Detection (PaddleOCR-VL + QR cross-check,
