@@ -68,6 +68,80 @@ class VoiceGenerator:
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._model = ChatterboxTurboTTS.from_pretrained(device=device)
 
+    @staticmethod
+    def _as_float32(value):
+        """Cast a waveform (or a list of them) to float32, leaving anything
+        else untouched. numpy arrays and torch tensors both, because the two
+        call sites below take different types."""
+        import numpy as np
+        import torch
+
+        if isinstance(value, (list, tuple)):
+            return type(value)(VoiceGenerator._as_float32(v) for v in value)
+        if isinstance(value, np.ndarray):
+            return value.astype(np.float32, copy=False)
+        if torch.is_tensor(value) and value.dtype != torch.float32:
+            return value.to(torch.float32)
+        return value
+
+    def _patch_reference_audio_dtype(self) -> None:
+        """Force float32 into the two consumers of the REFERENCE waveform.
+
+        2026-09-01, on a Colab T4: generation died with
+
+            ValueError: input must have the type torch.float32, got type torch.float64
+
+        raised by an LSTM inside Chatterbox's voice encoder, after the model
+        and PerthNet had both loaded -- so never an install or a CUDA problem.
+
+        The cause is one dtype, not two bugs. Chatterbox's own
+        prepare_conditionals() loads the reference clip with librosa.load(),
+        which returns float64 by default, and librosa.resample() preserves
+        that. The float64 waveform then reaches two places, and each inherits
+        it (verified against the installed source in
+        backend/voice_gen_env/Lib/site-packages/chatterbox/):
+
+          - VoiceEncoder.embeds_from_wavs() -> melspectrogram() builds a
+            float64 mel -> embeds_from_mels() -> inference() -> self.lstm,
+            whose weights are float32. torch refuses the mix. That is the
+            traceback above.
+          - S3Tokenizer.forward() -> _prepare_audio() produces a float64
+            tensor -> log_mel_spectrogram(). Same class of failure; it is the
+            one that surfaced first, and patching only it just moved the error
+            downstream to the voice encoder.
+
+        Casting each failing tensor as it appears is whack-a-mole against a
+        single upstream cause, so this casts at the two boundaries the
+        waveform crosses. The alternative -- reimplementing
+        prepare_conditionals() with .astype("float32") in it -- would pin this
+        file to one Chatterbox version's internals; these two are stable
+        public methods.
+
+        Distinct from _patch_watermarker_dtype below: that one is on the way
+        OUT (generated waveform -> perth) and only appears on CPU. This one is
+        on the way IN (reference clip -> conditioning) and appears on both
+        devices."""
+        ve = getattr(self._model, "ve", None)
+        if ve is not None and not getattr(ve, "_fraudshield_f32_ref_patch", False):
+            inner_embeds = ve.embeds_from_wavs
+
+            def embeds_from_wavs(wavs, *args, **kwargs):
+                return inner_embeds(VoiceGenerator._as_float32(wavs), *args, **kwargs)
+
+            ve.embeds_from_wavs = embeds_from_wavs
+            ve._fraudshield_f32_ref_patch = True
+
+        s3gen = getattr(self._model, "s3gen", None)
+        tokenizer = getattr(s3gen, "tokenizer", None) if s3gen is not None else None
+        if tokenizer is not None and not getattr(tokenizer, "_fraudshield_f32_ref_patch", False):
+            inner_forward = tokenizer.forward
+
+            def forward(wavs, *args, **kwargs):
+                return inner_forward(VoiceGenerator._as_float32(wavs), *args, **kwargs)
+
+            tokenizer.forward = forward
+            tokenizer._fraudshield_f32_ref_patch = True
+
     def _patch_watermarker_dtype(self) -> None:
         """Force float32 into Chatterbox's Perth watermarker.
 
@@ -115,6 +189,7 @@ class VoiceGenerator:
         import torchaudio as ta
 
         self._ensure_loaded()
+        self._patch_reference_audio_dtype()
         self._patch_watermarker_dtype()
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
