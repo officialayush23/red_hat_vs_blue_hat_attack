@@ -70,7 +70,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if not ATTACKS_DIR.exists():
-        raise FileNotFoundError(f"{ATTACKS_DIR} not found. Run generate/inject_attacks.py first.")
+        # Not an error. This script covers the four TABULAR families only;
+        # an environment that pulled just the media bundles (a Colab runtime
+        # doing the document or voice evaluation, say) legitimately has no
+        # data/generated/attacks/ at all. Hard-failing there marked the whole
+        # generation pipeline FAILED and, worse, aborted before
+        # backfill_phase2_artifacts could run -- so the media backfill that
+        # the run actually needed never happened.
+        print(f"{ATTACKS_DIR} not present -- no tabular cases to backfill on this machine. "
+              "Skipping (run generate/inject_attacks.py if you expected tabular data here).")
+        return
 
     paths = sorted(ATTACKS_DIR.glob("*/*/*.json"))
     print(f"Found {len(paths):,} generated case files under {ATTACKS_DIR}")

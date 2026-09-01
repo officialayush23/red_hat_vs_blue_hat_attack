@@ -52,7 +52,28 @@ BUCKET = "attack-artifacts"
 
 
 def _upload_file(client, local_path: Path, storage_path: str) -> str:
-    content_type = mimetypes.guess_type(str(local_path))[0] or "application/octet-stream"
+    # mimetypes.guess_type returns "audio/x-wav" for .wav on some platforms
+    # (Colab's Linux among them) and "audio/wav" on others. The
+    # attack-artifacts bucket's allowed_mime_types list (004_storage_buckets.sql)
+    # only names the canonical forms, so the x- variant is rejected outright:
+    #   {'statusCode': 415, 'error': invalid_mime_type,
+    #    'message': mime type audio/x-wav is not supported}
+    # That killed the voice half of this backfill on 2026-09-01 AFTER the
+    # document half had already succeeded. Normalising here rather than
+    # widening the bucket policy: the bucket's allowed list is the schema's
+    # contract for what these artifacts are, and "audio/x-wav" is the same
+    # thing spelled differently by a local mimetypes database, not a new type.
+    _MIME_ALIASES = {
+        "audio/x-wav": "audio/wav",
+        "audio/wave": "audio/wav",
+        "audio/vnd.wave": "audio/wav",
+        "audio/x-mpeg": "audio/mpeg",
+        "audio/mp3": "audio/mpeg",
+        "image/jpg": "image/jpeg",
+        "video/x-m4v": "video/mp4",
+    }
+    _guessed = mimetypes.guess_type(str(local_path))[0] or "application/octet-stream"
+    content_type = _MIME_ALIASES.get(_guessed, _guessed)
     with open(local_path, "rb") as f:
         client.storage.from_(BUCKET).upload(
             storage_path, f, file_options={"content-type": content_type, "upsert": "true"},
