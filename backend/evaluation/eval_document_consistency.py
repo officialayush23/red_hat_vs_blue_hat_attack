@@ -28,6 +28,7 @@ Usage:
     python backend/evaluation/eval_document_consistency.py
 """
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -249,15 +250,44 @@ def main() -> None:
     # Best-effort, non-fatal -- see eval_phishing_classifier.py for why.
     try:
         client = get_service_client()
-        bonafide_records = [
-            {"case_id": bonafide_paths[i].stem, "score": float(bonafide_scores[i]),
-             "threshold": threshold, "is_fraud": False, "evidence": bonafide_evidence[i]}
-            for i in range(len(bonafide_paths))
-        ]
+        # BONAFIDE ARE PARTITIONED, NOT REPEATED (2026-09-01).
+        #
+        # This block used to pass `bonafide_records + split_records` to BOTH
+        # the train and the held_out run, so all 200 legitimate invoices were
+        # written twice -- 400 evaluation_results rows against 200
+        # attack_cases. Every aggregate over this table then counted the legit
+        # population double, which deflates any FPR computed from the rows
+        # rather than from metrics.json.
+        #
+        # Repeating them is not the only thing that would be wrong: dropping
+        # them from one run would leave that run with no negatives at all, so
+        # its precision would be undefined. So each bonafide case is assigned
+        # to exactly ONE split, deterministically by a hash of its own id and
+        # in proportion to how much fraud each split holds. Every run keeps
+        # real negatives, no row is duplicated, and the assignment is
+        # reproducible on any machine without storing a mapping.
+        #
+        # NOTE: per-run precision is therefore computed against a SUBSET of
+        # the negatives. metrics.json remains the authoritative record -- it
+        # is computed over the full bonafide set. These rows exist for the
+        # evidence viewer, which needs one row per case, not two.
+        split_of = {}
+        counts = {sp: sum(1 for c in cases if c["split_portion"] == sp)
+                  for sp in ("train", "held_out")}
+        total_fraud = sum(counts.values()) or 1
+        for i, bp in enumerate(bonafide_paths):
+            bucket = int(hashlib.sha256(bp.stem.encode()).hexdigest()[:8], 16) % total_fraud
+            split_of[i] = "train" if bucket < counts["train"] else "held_out"
+
         for split in ("train", "held_out"):
             idx = [i for i, c in enumerate(cases) if c["split_portion"] == split]
             if not idx:
                 continue
+            bonafide_records = [
+                {"case_id": bonafide_paths[i].stem, "score": float(bonafide_scores[i]),
+                 "threshold": threshold, "is_fraud": False, "evidence": bonafide_evidence[i]}
+                for i in range(len(bonafide_paths)) if split_of[i] == split
+            ]
             split_records = [
                 {"case_id": cases[i]["case_id"], "score": float(fraud_scores[i]),
                  "threshold": threshold, "is_fraud": True, "evidence": fraud_evidence[i]}
@@ -269,6 +299,7 @@ def main() -> None:
                 cases=bonafide_records + split_records,
             )
             print(f"  Supabase: evaluation_run {run_id} ({run_type}, "
+                  f"{len(split_records)} fraud + {len(bonafide_records)} bonafide = "
                   f"{len(bonafide_records) + len(split_records)} per-case results)")
     except Exception as exc:
         # Loud, on stdout, and flagged as a FAILURE -- not a quiet stderr
