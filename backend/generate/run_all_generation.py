@@ -66,7 +66,25 @@ STEPS = [
      lambda a: ["--n-per-split", str(a.n_per_split), "--seed", str(a.seed)]),
     ("video_kyc_attacks", "generate/generate_video_kyc_attacks.py", None,
      lambda a: []),
+    # backfill_attack_cases.py scans data/generated/attacks/ ONLY -- the four
+    # tabular families. The three media families (document_fraud, voice_scam,
+    # phishing_scam) live in their own directories and are backfilled by a
+    # separate script, backfill_phase2_artifacts.py, which was never in this
+    # list.
+    #
+    # 2026-09-01, the bug that cost a full Colab run: regenerating documents
+    # (120 -> 480 cases) and running this pipeline reported every step OK,
+    # but attack_cases still held the old 80 document_fraud + 40
+    # document_bonafide rows. evaluation_results.case_id has a foreign key to
+    # attack_cases, so when the evaluation then scored all 680 cases, every
+    # insert batch was rejected for referencing case ids that did not exist.
+    # The persistence block is best-effort and caught the exception, printed
+    # it to stderr, and continued -- inside a subprocess whose stderr was not
+    # displayed. Result: metrics.json updated with real numbers, Supabase
+    # still reporting 0 scored document cases, and nothing anywhere saying so.
     ("backfill_attack_cases", "db/backfill_attack_cases.py", None,
+     lambda a: []),
+    ("backfill_phase2_artifacts", "db/backfill_phase2_artifacts.py", None,
      lambda a: []),
     ("sync_model_registry", "db/sync_model_registry.py", None,
      lambda a: []),

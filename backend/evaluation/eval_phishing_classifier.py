@@ -219,6 +219,20 @@ def main() -> None:
             print(f"  Supabase: evaluation_run {run_id} ({run_type}, "
                   f"{len(bonafide_records) + len(split_records)} per-case results)")
     except Exception as exc:
+        # Loud, on stdout, and flagged as a FAILURE -- not a quiet stderr
+        # aside. This exact handler hid a 100% persistence failure on
+        # 2026-09-01: every insert was rejected by evaluation_results'
+        # foreign key to attack_cases because the backfill for this family
+        # had never run, and the only trace was a stderr line inside a
+        # subprocess whose stderr was not shown. metrics.json looked
+        # perfect while Supabase received nothing.
+        print("\n  !! SUPABASE PERSISTENCE FAILED -- metrics.json was still written, but NO "
+              "per-case rows reached the database.", flush=True)
+        print(f"  !! {type(exc).__name__}: {exc}", flush=True)
+        print("  !! If this mentions a foreign key on case_id, this family's cases are missing "
+              "from attack_cases: run `python generate/run_all_generation.py "
+              "--only backfill_attack_cases,backfill_phase2_artifacts` and re-run this eval.",
+              flush=True)
         print(f"  Supabase per-case persistence skipped (non-fatal): {exc}", file=sys.stderr)
 
 
