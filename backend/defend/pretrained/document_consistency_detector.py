@@ -40,9 +40,13 @@ version3.x/pipeline_usage/PaddleOCR-VL.en.md, verified 2026-08-30):
         res.markdown["markdown_texts"]  # plain-text/markdown page content
 Requires the `paddleocr[doc-parser]` install extra, not plain `paddleocr`.
 
-QR decoding uses OpenCV's built-in cv2.QRCodeDetector -- already a
-transitive dependency of paddleocr, so no separate QR-reading library
-needed.
+QR decoding uses OpenCV's built-in cv2.QRCodeDetector. That used to arrive
+as a transitive dependency of paddleocr; now that the OCR engine is
+selectable and paddle is no longer required, opencv-python is a dependency
+of this detector in its own right and is listed as one in
+requirements.txt. rapidocr-onnxruntime pulls it in too, but relying on
+that would put the QR half of this detector at the mercy of whichever OCR
+backend happens to be installed.
 
 Identity-consistency-vs-customer-profile (does the beneficiary match this
 case's customer_id's trusted_beneficiaries?) is deliberately NOT built
@@ -53,6 +57,7 @@ customer_id in hand, not duplicated here.
 """
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -70,17 +75,101 @@ _AMOUNT_RE = re.compile(r"GRAND\s*TOTAL:?\s*\$?\s*([\d,]+\.?\d*)", re.IGNORECASE
 _BANK_ACCOUNT_RE = re.compile(r"A/C\s*No\.?:?\s*([A-Za-z0-9\-]+)", re.IGNORECASE)
 
 
-class DocumentConsistencyDetector:
-    """Lazy-loads PaddleOCR-VL on first use (not at import time) so
-    importing this module doesn't require paddleocr/paddlepaddle unless
-    the detector is actually used."""
+# ---------------------------------------------------------------------------
+# OCR backends
+# ---------------------------------------------------------------------------
+#
+# 2026-09-01: the OCR engine is now pluggable, because PaddleOCR-VL turned
+# out to be the single most fragile dependency in this project and the
+# least necessary one.
+#
+# What it cost:
+#   - Windows local inference: [WinError 127] from the paddle/torch bundled
+#     cudnn filename collision, then os error 1455 (pagefile) at first
+#     inference after a full successful model load.
+#   - CPU inference measured at 373.5 s/image -- 480 cases would be ~50 h.
+#   - Colab: `EVAL FAILED: A dependency error occurred during pipeline
+#     creation` even after installing paddlepaddle + paddleocr, with
+#     paddle reporting GPU: False.
+#
+# What it was buying: reading four printed fields off invoices THIS PROJECT
+# RENDERS ITSELF with Pillow (generate/artifact_generators/document_gen.py)
+# -- clean, high-contrast, known-font, axis-aligned text. A 0.9B-parameter
+# document-parsing VLM is not needed to read a rendered invoice; it was
+# chosen for layout robustness on real-world scans, which these are not.
+#
+# Everything downstream of OCR here (the four regexes, the QR cross-check,
+# the scoring) only ever consumed one joined text string, so the engine was
+# always swappable -- it just wasn't swappable *at runtime*.
+#
+# Backends, in the order auto-detection tries them:
+#   rapidocr  -- the PP-OCR models themselves, run through onnxruntime.
+#                Same recognition lineage as paddle's, no paddlepaddle, no
+#                CUDA DLLs, no pagefile blow-up; installs and runs on
+#                Windows. This is why the whole document evaluation can go
+#                back to running locally.
+#   tesseract -- pytesseract + the tesseract binary. Excellent on clean
+#                rendered text, tiny, but needs a system package.
+#   easyocr   -- torch-based, GPU if present.
+#   paddlevl  -- the original PaddleOCR-VL path, unchanged, still selectable.
+#
+# Override with DOC_OCR_BACKEND=rapidocr|tesseract|easyocr|paddlevl.
+#
+# IMPORTANT for evidence-gating: changing the engine changes the detector.
+# The recorded document_consistency_detector numbers (recall 0.9125,
+# precision 0.8795, n=120) were measured with paddlevl. Any run on another
+# backend must be recorded as its own entry -- score_with_evidence()
+# reports the backend in its evidence so a result can never be read as if
+# it came from a different engine.
+
+_BACKEND_ORDER = ("rapidocr", "tesseract", "easyocr", "paddlevl")
+
+
+class _RapidOCRBackend:
+    name = "rapidocr"
 
     def __init__(self):
-        self._ocr = None
+        from rapidocr_onnxruntime import RapidOCR
+        self._engine = RapidOCR()
 
-    def _ensure_loaded(self) -> None:
-        if self._ocr is not None:
-            return
+    def read(self, image_path: str) -> str:
+        result, _ = self._engine(str(image_path))
+        if not result:
+            return ""
+        # RapidOCR returns [[box, text, confidence], ...] in reading order.
+        return "\n".join(str(line[1]) for line in result)
+
+
+class _TesseractBackend:
+    name = "tesseract"
+
+    def __init__(self):
+        import pytesseract
+        from PIL import Image
+        self._pytesseract = pytesseract
+        self._Image = Image
+        # Fails here rather than on the first image if the binary is absent.
+        pytesseract.get_tesseract_version()
+
+    def read(self, image_path: str) -> str:
+        return self._pytesseract.image_to_string(self._Image.open(str(image_path)))
+
+
+class _EasyOCRBackend:
+    name = "easyocr"
+
+    def __init__(self):
+        import easyocr
+        self._reader = easyocr.Reader(["en"], verbose=False)
+
+    def read(self, image_path: str) -> str:
+        return "\n".join(self._reader.readtext(str(image_path), detail=0))
+
+
+class _PaddleVLBackend:
+    name = "paddlevl"
+
+    def __init__(self):
         from paddleocr import PaddleOCRVL
 
         # use_queues=False (2026-08-30): PaddleOCR-VL's downloaded pipeline
@@ -110,11 +199,70 @@ class DocumentConsistencyDetector:
             return "\n".join(str(t) for t in texts)
         return str(texts)
 
+    def read(self, image_path: str) -> str:
+        results = self._ocr.predict(str(image_path))
+        return "\n".join(self._markdown_text(res) for res in results)
+
+
+_BACKENDS = {
+    "rapidocr": _RapidOCRBackend,
+    "tesseract": _TesseractBackend,
+    "easyocr": _EasyOCRBackend,
+    "paddlevl": _PaddleVLBackend,
+}
+
+
+def _load_backend():
+    """Explicit choice if DOC_OCR_BACKEND is set, otherwise the first
+    backend in _BACKEND_ORDER that actually imports and initialises.
+    Raises with every failure listed, rather than a bare ImportError for
+    whichever one happened to be tried last."""
+    requested = os.environ.get("DOC_OCR_BACKEND", "").strip().lower()
+    if requested:
+        if requested not in _BACKENDS:
+            raise ValueError(f"DOC_OCR_BACKEND={requested!r} is not one of {sorted(_BACKENDS)}")
+        return _BACKENDS[requested]()
+
+    failures = []
+    for name in _BACKEND_ORDER:
+        try:
+            return _BACKENDS[name]()
+        except Exception as exc:
+            failures.append(f"{name}: {type(exc).__name__}: {exc}")
+    raise RuntimeError(
+        "No OCR backend available for the document-consistency detector. Tried:\n  "
+        + "\n  ".join(failures)
+        + "\n\nInstall one of:\n"
+        "  pip install rapidocr-onnxruntime      (recommended -- runs on Windows, CPU, no paddle)\n"
+        "  pip install pytesseract               (plus the tesseract binary)\n"
+        "  pip install easyocr\n"
+        "  pip install 'paddleocr[doc-parser]' paddlepaddle-gpu"
+    )
+
+
+class DocumentConsistencyDetector:
+    """Lazy-loads an OCR backend on first use (not at import time) so
+    importing this module needs no OCR dependency at all unless the
+    detector is actually used. See the backend notes above for why the
+    engine is selectable rather than hardcoded to PaddleOCR-VL."""
+
+    def __init__(self, backend=None):
+        self._ocr = None
+        self._backend = backend
+
+    @property
+    def backend_name(self) -> str:
+        self._ensure_loaded()
+        return self._ocr.name
+
+    def _ensure_loaded(self) -> None:
+        if self._ocr is not None:
+            return
+        self._ocr = _BACKENDS[self._backend]() if self._backend else _load_backend()
+
     def _extract_printed_fields(self, image_path: str) -> dict:
         self._ensure_loaded()
-        results = self._ocr.predict(str(image_path))
-        texts = [self._markdown_text(res) for res in results]
-        joined = "\n".join(texts)
+        joined = self._ocr.read(image_path)
 
         fields = {}
         m = _INVOICE_NUMBER_RE.search(joined)
@@ -184,15 +332,20 @@ class DocumentConsistencyDetector:
         unaffected) -- 'evidence' here means the detector's own reasoning
         trace, never ground truth."""
         printed = self._extract_printed_fields(image_path)
+        # Which engine read this image is part of the evidence, not a
+        # footnote: swapping the OCR backend changes the detector, and a
+        # result recorded without it could be compared against numbers from
+        # a different engine as though they measured the same thing.
+        engine = [f"ocr_backend={self.backend_name}"]
         qr = self._decode_qr(image_path)
         if qr is None:
-            return 1.0, ["QR payload could not be decoded at all"]
+            return 1.0, engine + ["QR payload could not be decoded at all"]
 
         comparisons = self._compare_fields(printed, qr)
         if not comparisons:
-            return 0.5, ["OCR found none of the 4 comparable fields -- score is genuinely unknown"]
+            return 0.5, engine + ["OCR found none of the 4 comparable fields -- score is genuinely unknown"]
 
-        evidence = []
+        evidence = list(engine)
         mismatched = 0
         for key, printed_val, qr_val, matched in comparisons:
             if matched:

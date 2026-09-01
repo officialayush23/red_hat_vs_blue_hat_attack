@@ -35,6 +35,22 @@ transformers>=4.44
 librosa>=0.10
 soundfile>=0.12
 
+# Phase 2 -- document_fraud DETECTION. As of 2026-09-01 the OCR engine in
+# defend/pretrained/document_consistency_detector.py is pluggable, and
+# rapidocr-onnxruntime is the default: it runs the same PP-OCR models
+# through onnxruntime, so there is no paddlepaddle, no bundled CUDA DLLs to
+# collide with torch's on Windows, and no 0.9B-parameter VLM. That removes
+# every blocker this detector had -- [WinError 127], os error 1455
+# (pagefile) at first inference, 373.5 s/image on CPU, and a Colab
+# "dependency error during pipeline creation" -- for a task that is reading
+# four fields off invoices this project renders itself with Pillow.
+# requirements-paddleocr-gpu.txt is kept for the original paddlevl backend.
+#
+# opencv-python is listed explicitly because cv2.QRCodeDetector does the QR
+# half of the cross-check; it used to arrive transitively via paddleocr.
+rapidocr-onnxruntime>=1.3
+opencv-python>=4.9
+
 # Phase 2 -- document_fraud generation only (Pillow/qrcode, lightweight).
 # Detection (PaddleOCR-VL + QR cross-check,
 # defend/pretrained/document_consistency_detector.py) does NOT live in this

@@ -164,9 +164,21 @@ def main() -> None:
         per_split[split] = compute_binary_metrics(combined_true, combined_score, threshold=threshold)
         print(f"  {split} (n={len(idx)}): recall={per_split[split]['recall']:.4f}")
 
+    # The OCR engine is part of the model's identity, so it is part of the
+    # metrics key. document_consistency_detector's recorded numbers (recall
+    # 0.9125, n=120) were measured with PaddleOCR-VL; a run on rapidocr or
+    # tesseract is a different detector and must not silently overwrite
+    # them. The canonical key is kept for the paddlevl backend so existing
+    # history and the frontend's PRIMARY_MODEL_IDS entry stay valid.
+    backend = getattr(detector, "backend_name", "unknown")
+    metrics_key = ("document_consistency_detector" if backend == "paddlevl"
+                   else f"document_consistency_detector_{backend}")
+    print(f"\nOCR backend: {backend} -> recording as '{metrics_key}'")
+
     record_result(
-        RESULTS_JSON, "document_consistency_detector", overall,
+        RESULTS_JSON, metrics_key, overall,
         extra={
+            "ocr_backend": backend,
             "decision_threshold": threshold,
             "n_bonafide": len(bonafide_scores),
             "n_fraud": len(fraud_scores),
@@ -175,7 +187,9 @@ def main() -> None:
             "note": ("pretrained OCR-VL + our own QR cross-check logic, no training -- "
                      "evidence-gate run per Principle 11. Threshold calibrated via "
                      "best_f1_threshold on bonafide + train-split fraud only (round 2), then "
-                     "applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default."),
+                     "applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default. "
+                     f"OCR read by the '{backend}' backend (see "
+                     "defend/pretrained/document_consistency_detector.py's backend notes)."),
         },
     )
     _append_results_md(overall, per_split, len(bonafide_scores), threshold)
