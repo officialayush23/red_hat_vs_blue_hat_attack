@@ -68,6 +68,7 @@ Usage:
     python backend/evaluation/eval_behavioral_adjustment.py
 """
 
+import collections
 import json
 import sys
 from pathlib import Path
@@ -177,6 +178,27 @@ def main() -> None:
     print("Loading synthetic customer roster...")
     roster_by_id = {c["id"]: c for c in load_roster()}
 
+    # n_linked above counts a customer_id being PRESENT. That is not the same
+    # as the adjustment having anything to work with, and conflating the two
+    # is what hid a dead feature: on 2026-09-01 this script reported
+    # n_customer_linked_rows=2000 while every one of those customers' files
+    # carried metadata={name, trusted_beneficiaries} and no behavior_baseline
+    # at all, so behavioral_adjustment() took its "no behavior_baseline
+    # available" early return 2000 times and the baseline/adjusted metric
+    # blocks came out bit-identical. Coverage is measured directly now.
+    n_with_baseline = sum(
+        1 for cid in fraud_raw.get("customer_id", pd.Series(dtype=object))
+        if (roster_by_id.get(cid) or {}).get("metadata", {}).get("behavior_baseline")
+    )
+    print(f"  {n_with_baseline:,} of {len(fraud_raw):,} rows resolve to a customer WITH a "
+          f"behavior_baseline ({n_with_baseline / len(fraud_raw):.0%})")
+    if n_with_baseline == 0:
+        raise ValueError(
+            "Not one row resolves to a customer with a behavior_baseline, so "
+            "behavioral_adjustment() can only pass through and this comparison would be "
+            "vacuous. Fix: python generate/synthetic_customers.py --backfill-baselines"
+        )
+
     prep = TabularPreprocessor.load(PREPROCESSOR_PATH)
     legit_feats = prep.transform_tree(legit_X)
     fraud_feats = prep.transform_tree(fraud_raw)
@@ -201,12 +223,18 @@ def main() -> None:
 
     fraud_adjusted_scores = np.empty(len(fraud_raw), dtype="float64")
     n_corroborated = n_discounted = n_unchanged = 0
+    # Why each row landed where it did. "0 corroborated, 0 discounted" is only
+    # interpretable next to this: a rule that never fires because the data
+    # cannot reach its threshold is a different finding from a rule that fires
+    # and does not help.
+    reason_hist = collections.Counter()
     for i, row in fraud_raw.iterrows():
         customer = roster_by_id.get(row.get("customer_id"))
         baseline = customer.get("metadata", {}).get("behavior_baseline") if customer else None
         transaction = {"amount": row.get("amount"), "country": row.get("country"), "channel": row.get("channel")}
         adjusted, reason = behavioral_adjustment(float(fraud_base_scores[i]), transaction, baseline)
         fraud_adjusted_scores[i] = adjusted
+        reason_hist[reason.split(":")[0].split("(")[0].strip()] += 1
         if reason.startswith("corroborated"):
             n_corroborated += 1
         elif reason.startswith("discounted"):
@@ -214,6 +242,21 @@ def main() -> None:
         else:
             n_unchanged += 1
     print(f"  {n_corroborated} corroborated (boosted), {n_discounted} discounted, {n_unchanged} unchanged")
+    print("  reason breakdown:")
+    for reason, count in reason_hist.most_common():
+        print(f"    {count:7,}  {reason}")
+
+    if n_corroborated == 0 and n_discounted == 0:
+        # Deliberately NOT an exception. A layer that provably changes nothing
+        # on this data is a real, reportable result -- the honest read is that
+        # these attacks sit inside the customer's own occasional-but-legitimate
+        # envelope on most comparable dimensions, which is a red-team finding,
+        # not a blue-team bug. What must never happen again is it being
+        # invisible, so it is stated here and recorded in metrics.json below.
+        print("\n  !! behavioral_adjustment() changed 0 of "
+              f"{len(fraud_raw):,} scores. The two metric blocks recorded below WILL be "
+              "identical. This layer currently contributes nothing to detection -- report it "
+              "that way rather than as a working component.", flush=True)
 
     y_true = np.concatenate([np.zeros(len(legit_base_scores)), np.ones(len(fraud_base_scores))])
     baseline_metrics = compute_binary_metrics(
@@ -229,6 +272,7 @@ def main() -> None:
 
     common_extra = {
         "threshold": THRESHOLD, "n_fraud_rows": len(fraud_raw), "n_customer_linked_rows": n_linked,
+        "n_rows_with_behavior_baseline": n_with_baseline,
         "n_legit_rows": len(legit_base_scores),
     }
     record_result(RESULTS_JSON, "behavioral_adjustment_baseline", baseline_metrics, extra={
@@ -239,6 +283,8 @@ def main() -> None:
     record_result(RESULTS_JSON, "behavioral_adjustment_adjusted", adjusted_metrics, extra={
         **common_extra,
         "n_corroborated": n_corroborated, "n_discounted": n_discounted, "n_unchanged": n_unchanged,
+        "reason_histogram": dict(reason_hist),
+        "changed_any_score": bool(n_corroborated or n_discounted),
         "note": "fused score + defend/fusion.py's behavioral_adjustment() using each case's real "
                 "customer_id + behavior_baseline -- Principle 11 evidence-gate run, account_takeover "
                 "held-out. Compare against behavioral_adjustment_baseline for the same rows/threshold.",

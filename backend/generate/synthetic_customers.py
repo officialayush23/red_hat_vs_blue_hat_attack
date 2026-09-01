@@ -92,6 +92,34 @@ def _synthetic_kyc_id(rng: random.Random) -> str:
     return f"CUST-{rng.randint(100000, 999999)}"
 
 
+def baseline_for_customer_id(customer_id: str) -> dict:
+    """Deterministic baseline for an EXISTING customer, keyed off their id.
+
+    2026-09-01. behavioral_adjustment() was a measured no-op: its evidence-gate
+    run reported n_corroborated=0, n_discounted=0, n_unchanged=2000, and the
+    baseline/adjusted metric blocks were bit-identical to the last decimal.
+    The cause was not the logic -- it was that every customer file under
+    data/generated/synthetic_customers/ carried metadata = {name,
+    trusted_beneficiaries} and NO behavior_baseline, so the function took its
+    "no behavior_baseline available for this customer" early return 2000 times
+    out of 2000. The roster on disk predates the 2026-08-30 commit that added
+    _generate_behavior_baseline(), and a storage_sync pull restored those older
+    files on top.
+
+    Re-running build_roster() is NOT the fix. It mints 12 customers off one
+    seeded RNG stream, while the roster on disk holds 21 (an earlier run used a
+    different N_CUSTOMERS) and data/processed/*.parquet references all 21 by
+    customer_id. Regenerating would leave 9 of them without a baseline, and any
+    future change to the draw order would renumber everyone and break the
+    linkage that inject_attacks.py already wrote into the parquets.
+
+    So the baseline is derived from the customer's OWN id instead of from a
+    position in a shared stream. Same customer -> same baseline, on any machine,
+    in any order, however many customers exist. Nothing else about the roster
+    moves."""
+    return _generate_behavior_baseline(random.Random(f"{SEED}:{customer_id}"))
+
+
 def _generate_behavior_baseline(rng: random.Random) -> dict:
     """Summary-statistic baseline, not a transaction log -- mule_network's
     actual account/beneficiary graph topology is built in generate_mule_
@@ -166,13 +194,47 @@ def load_roster() -> list:
     generate_voice_attacks.py / generate_document_attacks.py so they don't
     need Supabase access just to assign a customer_id. Run this module's
     __main__ first."""
-    if not OUT_DIR.exists() or not any(OUT_DIR.glob("*.json")):
+    # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
+    # directory it manages, INCLUDING this one. A bare *.json glob picks it up
+    # and hands callers a dict with no "id" and no "metadata" -- a phantom
+    # 22nd customer that inject_attacks.py would happily round-robin a real
+    # case onto. Anything starting with a dot is infrastructure, not a customer.
+    paths = sorted(p for p in OUT_DIR.glob("*.json") if not p.name.startswith("."))
+    if not OUT_DIR.exists() or not paths:
         raise FileNotFoundError(f"No customer files under {OUT_DIR}. Run generate/synthetic_customers.py first.")
-    return [json.loads(p.read_text()) for p in sorted(OUT_DIR.glob("*.json"))]
+    return [json.loads(p.read_text()) for p in paths]
+
+
+def backfill_baselines() -> list:
+    """Add behavior_baseline to every roster file that lacks one, in place.
+
+    Idempotent and id-preserving -- see baseline_for_customer_id(). Returns the
+    full roster so main() can upsert it."""
+    roster = load_roster()
+    added = 0
+    for customer in roster:
+        meta = customer.setdefault("metadata", {})
+        if meta.get("behavior_baseline"):
+            continue
+        meta["behavior_baseline"] = baseline_for_customer_id(customer["id"])
+        (OUT_DIR / f"{customer['id']}.json").write_text(json.dumps(customer, indent=2))
+        added += 1
+    print(f"behavior_baseline: {added} added, {len(roster) - added} already present "
+          f"({len(roster)} customers total)")
+    return roster
 
 
 def main() -> None:
     from db.supabase_client import get_service_client
+
+    if "--backfill-baselines" in sys.argv:
+        # Repair path: keep every existing customer id and every parquet
+        # linkage, just fill in the field behavioral_adjustment() needs.
+        roster = backfill_baselines()
+        client = get_service_client()
+        client.table("synthetic_customers").upsert(roster, on_conflict="id").execute()
+        print(f"Upserted {len(roster)} rows into Supabase synthetic_customers")
+        return
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     roster = build_roster()
