@@ -18,6 +18,7 @@
 
 import { supabase } from "@/lib/supabaseClient";
 import { ATTACK_FAMILIES, getFamily } from "@/data/attackFamilies.generated";
+import { ATTACK_SCENARIOS, scenarioMatches } from "@/data/attackScenarios";
 
 // evaluation_results.case_id is "<family>_<hash>" for attack cases and
 // "<family-ish>_bonafide_<n>" for legitimate samples (both written by the
@@ -231,4 +232,104 @@ export async function getCategoryBreakdown() {
     ...e,
     detectionRate: e.blocked + e.missed ? (e.blocked / (e.blocked + e.missed)) * 100 : null,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Named scenarios
+// ---------------------------------------------------------------------------
+
+
+const SCENARIO_SAMPLE_PER_FAMILY = 900;
+const ID_CHUNK = 300;
+
+function resolvedParamsOf(row) {
+  const p = row.mutation_params ?? {};
+  // resolved_levels is the generator's record of the fully-resolved
+  // combination (declared combo + family defaults). Prefer it: a combo
+  // declared as just {merchant_category: "mismatch"} still has real values
+  // for the other three dimensions, and only resolved_levels records them.
+  return { ...p, ...(p.resolved_levels ?? {}) };
+}
+
+// GET /api/scenarios -- the named attacks, each backed by real cases.
+//
+// Case counts are EXACT (a jsonb containment count against attack_cases).
+// Outcomes are computed over a sample of up to 900 cases per family, because
+// evaluation_results has no scenario or mutation dimension of its own -- the
+// only way to attribute a result to a scenario is to match its case's real
+// mutation_params. The sample size is returned so the UI can say so instead
+// of implying the outcome covers every case.
+export async function listScenarios() {
+  const families = [...new Set(ATTACK_SCENARIOS.map((s) => s.family))];
+
+  const perFamily = await Promise.all(
+    families.map(async (family) => {
+      const { data: cases, error } = await supabase
+        .from("attack_cases")
+        .select("id,mutation_params,split_portion")
+        .eq("attack_family", family)
+        .limit(SCENARIO_SAMPLE_PER_FAMILY);
+      if (error) throw error;
+
+      const ids = (cases ?? []).map((c) => c.id);
+      const results = [];
+      for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        const { data, error: rErr } = await supabase
+          .from("evaluation_results")
+          .select("case_id,detected,actual_label,fused_risk_score,created_at")
+          .in("case_id", ids.slice(i, i + ID_CHUNK))
+          .order("created_at", { ascending: false });
+        if (rErr) throw rErr;
+        results.push(...(data ?? []));
+      }
+      const latestByCase = {};
+      for (const r of results) if (!latestByCase[r.case_id]) latestByCase[r.case_id] = r;
+
+      return { family, cases: cases ?? [], latestByCase };
+    }),
+  );
+  const byFamily = Object.fromEntries(perFamily.map((f) => [f.family, f]));
+
+  return Promise.all(
+    ATTACK_SCENARIOS.map(async (scenario) => {
+      const { count, error } = await supabase
+        .from("attack_cases")
+        .select("id", { count: "exact", head: true })
+        .eq("attack_family", scenario.family)
+        .contains("mutation_params", scenario.match);
+      if (error) throw error;
+
+      const bucket = byFamily[scenario.family];
+      const matched = (bucket?.cases ?? []).filter((c) => scenarioMatches(scenario, resolvedParamsOf(c)));
+      let blocked = 0;
+      let missed = 0;
+      let falsePositives = 0;
+      let scored = 0;
+      let riskTotal = 0;
+      for (const c of matched) {
+        const r = bucket.latestByCase[c.id];
+        if (!r) continue;
+        scored += 1;
+        riskTotal += r.fused_risk_score ?? 0;
+        if (r.actual_label === "fraud") {
+          if (r.detected) blocked += 1;
+          else missed += 1;
+        } else if (!r.detected) {
+          falsePositives += 1;
+        }
+      }
+
+      return {
+        ...scenario,
+        generatedCases: count ?? 0,
+        sampledCases: matched.length,
+        scoredInSample: scored,
+        blocked,
+        missed,
+        falsePositives,
+        avgRiskScore: scored ? riskTotal / scored : null,
+        detectionRate: blocked + missed ? (blocked / (blocked + missed)) * 100 : null,
+      };
+    }),
+  );
 }

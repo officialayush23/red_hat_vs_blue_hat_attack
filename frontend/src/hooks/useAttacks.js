@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { getAttack, getAttackCases, getGeneratedCombinations, getRepresentativeCase, listAttacks } from "@/services/api/attacks";
+import { getAttack, getAttackCases, getGeneratedCombinations, getRepresentativeCase, listAttacks, listScenarios } from "@/services/api/attacks";
 export function useAttacks() {
   return useQuery({
     queryKey: ["attacks"],
@@ -31,5 +31,12 @@ export function useGeneratedCombinations(family) {
     queryKey: ["generated-combinations", family],
     queryFn: () => getGeneratedCombinations(family),
     enabled: !!family
+  });
+}
+export function useScenarios() {
+  return useQuery({
+    queryKey: ["attack-scenarios"],
+    queryFn: listScenarios,
+    staleTime: 60_000
   });
 }
