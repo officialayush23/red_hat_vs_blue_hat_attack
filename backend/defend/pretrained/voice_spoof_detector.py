@@ -27,9 +27,28 @@ any import/shape errors back immediately, don't assume this is bug-free.
 
 from pathlib import Path
 
+import os
+
 import numpy as np
 
-MODEL_ID = "garystafford/wav2vec2-deepfake-voice-detector"
+# The spoof model is selectable, same pattern as the document detector's OCR
+# backend. Swapping it changes the detector, so eval_voice_spoof.py records
+# the model id in the metrics key -- a challenger can never overwrite the
+# incumbent's numbers, and both can be measured on the identical 166 cases.
+#
+# Incumbent (unchanged default): garystafford/wav2vec2-deepfake-voice-detector,
+# Apache 2.0, recall 0.8171 / precision 0.8701 / FPR 12.5% on n=166.
+#
+# Challengers worth measuring against it (all Hugging Face, all loadable
+# through the same AutoModelForAudioClassification path):
+#   mo-thecreator/Deepfake-audio-detection
+#   Hemgg/Deepfake-audio-detection
+# AASIST-family models (e.g. lab260/AASIST3) are the stronger published
+# architecture for ASVspoof-style anti-spoofing, but they are NOT
+# AutoModelForAudioClassification-compatible -- they need their own loader,
+# so they are a separate piece of work rather than a VOICE_MODEL_ID swap.
+DEFAULT_MODEL_ID = "garystafford/wav2vec2-deepfake-voice-detector"
+MODEL_ID = os.environ.get("VOICE_MODEL_ID", "").strip() or DEFAULT_MODEL_ID
 SAMPLE_RATE = 16_000
 
 

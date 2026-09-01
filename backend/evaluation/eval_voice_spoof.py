@@ -140,9 +140,21 @@ def main() -> None:
         per_split[split] = compute_binary_metrics(combined_true, combined_score, threshold=threshold)
         print(f"  {split} (n={len(idx)}): recall={per_split[split]['recall']:.4f}")
 
+    # Same rule as the document detector: the model is part of the model's
+    # identity, so it is part of the metrics key. Only the default checkpoint
+    # writes voice_spoof_detector; a challenger set via VOICE_MODEL_ID writes
+    # its own entry, so a bake-off produces comparable numbers on identical
+    # cases instead of one run overwriting another.
+    from defend.pretrained.voice_spoof_detector import DEFAULT_MODEL_ID, MODEL_ID
+    _slug = MODEL_ID.split("/")[-1].replace("-", "_").lower()
+    metrics_key = ("voice_spoof_detector" if MODEL_ID == DEFAULT_MODEL_ID
+                   else f"voice_spoof_detector_{_slug}")
+    print(f"\nSpoof model: {MODEL_ID} -> recording as '{metrics_key}'")
+
     record_result(
-        RESULTS_JSON, "voice_spoof_detector", overall,
+        RESULTS_JSON, metrics_key, overall,
         extra={
+            "model_id": MODEL_ID,
             "decision_threshold": threshold,
             "n_bonafide": len(bonafide_scores),
             "n_spoof": len(spoof_scores),
@@ -151,7 +163,7 @@ def main() -> None:
             "note": ("pretrained inference, no training -- evidence-gate run per Principle 11. "
                      "Threshold calibrated via best_f1_threshold on bonafide + train-split spoof "
                      "only (round 2), then applied unchanged to held_out -- round 1 used an "
-                     "uncalibrated 0.5 default."),
+                     f"uncalibrated 0.5 default. Scored by '{MODEL_ID}'."),
         },
     )
     _append_results_md(overall, per_split, len(bonafide_scores), threshold)
