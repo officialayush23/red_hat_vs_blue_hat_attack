@@ -41,6 +41,7 @@ Usage:
 """
 
 import argparse
+import tempfile
 import json
 import os
 import subprocess
@@ -178,6 +179,94 @@ def _run_script(script: Path, args: list, timeout: int = 3600) -> dict:
         return {"ok": False, "seconds": round(time.monotonic() - t0, 1), "tail": f"TIMED OUT after {timeout}s", "returncode": None, "stdout": ""}
     except Exception as exc:
         return {"ok": False, "seconds": 0.0, "tail": f"Failed to launch: {exc}", "returncode": None, "stdout": ""}
+
+
+def _run_script_streaming(script: Path, args: list, timeout: int = 3600, on_line=None) -> dict:
+    """Same contract as _run_script(), but reads the child's stdout LINE BY
+    LINE as it is produced and hands each line to on_line().
+
+    Why this exists: _run_script() uses subprocess.run(capture_output=True),
+    which returns nothing at all until the child exits. The blue-team stage
+    routinely runs for several minutes across many detectors, and for that
+    whole time the war room had exactly one "running" step and no way to
+    tell a slow run from a hung one. run_all_evaluations.py already prints
+    a per-step banner and flushes it; nobody was listening.
+
+    stderr goes to a temp FILE rather than a second pipe: reading two pipes
+    from one thread deadlocks as soon as either fills its buffer, and
+    merging stderr into stdout would let a warning printed mid-flush land
+    inside the ===JSON_SUMMARY_START=== block that _parse_json_summary()
+    has to parse. A file costs nothing and keeps both streams intact.
+    """
+    t0 = time.monotonic()
+    if not script.exists():
+        return {"ok": False, "seconds": 0.0, "tail": f"Script not found: {script}", "returncode": None, "stdout": ""}
+
+    out_lines = []
+    try:
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errf:
+            proc = subprocess.Popen(
+                [sys.executable, str(script), *args], cwd=str(BACKEND_DIR),
+                stdout=subprocess.PIPE, stderr=errf, text=True, bufsize=1,
+            )
+            try:
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    out_lines.append(line)
+                    if on_line is not None:
+                        try:
+                            on_line(line)
+                        except Exception:
+                            # A progress callback must never be able to kill
+                            # the run it is only reporting on.
+                            pass
+                    if timeout is not None and time.monotonic() - t0 > timeout:
+                        proc.kill()
+                        return {"ok": False, "seconds": round(time.monotonic() - t0, 1),
+                                "tail": f"TIMED OUT after {timeout}s", "returncode": None,
+                                "stdout": "\n".join(out_lines)}
+                proc.wait(timeout=60)
+            finally:
+                if proc.stdout:
+                    proc.stdout.close()
+            errf.seek(0)
+            err_text = errf.read()
+    except Exception as exc:
+        return {"ok": False, "seconds": 0.0, "tail": f"Failed to launch: {exc}", "returncode": None, "stdout": ""}
+
+    stdout = "\n".join(out_lines)
+    combined = stdout + err_text
+    return {"ok": proc.returncode == 0, "seconds": round(time.monotonic() - t0, 1),
+            "tail": "\n".join(combined.splitlines()[-20:]), "returncode": proc.returncode,
+            "stdout": stdout}
+
+
+def _banner_reporter(tracker, step, running_detail: str):
+    """Turns run_all_evaluations.py / run_all_generation.py's step banners
+    into live substeps on `step`.
+
+    Both scripts print (and flush) the same pair around every child they
+    run:
+        === voice_spoof (evaluation/eval_voice_spoof.py) ===
+        --- voice_spoof: OK (41.2s) ---
+    That is the only honest progress signal available: it comes from the
+    child actually starting and finishing real work, not from a timer
+    pretending to know how long the stage will take. Every other line is
+    ignored, so a chatty detector costs zero extra Supabase writes.
+    """
+    def on_line(line: str):
+        text = line.strip()
+        if text.startswith("=== ") and text.endswith(" ==="):
+            name = text[4:-4].split(" (")[0].strip()
+            if name:
+                tracker.push_substep(step, name, "running", running_detail)
+        elif text.startswith("--- ") and text.endswith(" ---") and ":" in text:
+            name, _, rest = text[4:-4].strip().partition(":")
+            rest = rest.strip()
+            tracker.push_substep(step, name.strip(),
+                                 "done" if rest.upper().startswith("OK") else "failed",
+                                 rest)
+    return on_line
 
 
 def _parse_json_summary(stdout: str):
@@ -437,10 +526,65 @@ class RunTracker:
         self._flush()
         return step
 
+    def update_step(self, step, **fields):
+        """Live update of a step that is still RUNNING.
+
+        complete_step() is terminal -- it stamps status="done" -- so there
+        was no way to say "this stage is still going, and here is how far
+        it has got". Every long stage therefore looked identical to a hung
+        one for its entire duration. This writes progress without closing
+        the step.
+
+        Each call is a Supabase round-trip, so callers must throttle: emit
+        on real milestones (a detector starting or finishing), never per
+        line of subprocess output.
+        """
+        step.update(fields)
+        step["timestamp"] = _now_iso()
+        self._flush()
+
+    def push_substep(self, step, label, status="running", detail=""):
+        """Appends/updates a named child of a running stage.
+
+        The war room renders these underneath the stage, so a blue-team
+        stage scoring six detectors shows six lines ticking over instead of
+        one spinner. Re-calling with the same label updates that child
+        rather than appending a duplicate -- which is what makes
+        "voice_spoof: running" become "voice_spoof: done (41.2s)" in place.
+        """
+        subs = step.setdefault("substeps", [])
+        for sub in subs:
+            if sub["label"] == label:
+                sub["status"] = status
+                if detail:
+                    sub["detail"] = detail
+                sub["timestamp"] = _now_iso()
+                break
+        else:
+            subs.append({"label": label, "status": status, "detail": detail,
+                         "timestamp": _now_iso()})
+        # Denominator is how many children have ANNOUNCED themselves, not
+        # how many will eventually run -- neither script declares its plan
+        # up front, so "2/3" here means "3 started, 2 finished" and the 3
+        # can still grow. Worded to match.
+        step["progress"] = (f"{sum(1 for x in subs if x['status'] == 'done')}"
+                            f" of {len(subs)} started so far")
+        step["timestamp"] = _now_iso()
+        self._flush()
+
     def complete_step(self, step, **fields):
         step.update(fields)
         step["status"] = "done"
         step["timestamp"] = _now_iso()
+        # Any child still marked "running" when its parent finishes never
+        # printed its own completion banner -- the subprocess died, was
+        # killed, or the marker changed shape. Leaving it spinning forever
+        # in the UI would be a lie about a process that is definitively
+        # over.
+        for sub in step.get("substeps", []):
+            if sub["status"] == "running":
+                sub["status"] = "unknown"
+                sub["detail"] = sub.get("detail") or "no completion banner -- outcome unknown"
         self._flush()
 
     def set_iteration(self, n):
@@ -589,8 +733,10 @@ def main() -> int:
         # ---- 4. attack-generator: REAL subprocess ----
         gen_only = ",".join(gen_steps_needed + ["backfill_attack_cases", "sync_model_registry"])
         gen_step = tracker.start_step("attack-generator", f"Running generate/run_all_generation.py --only {gen_only} ...")
-        gen_result = _run_script(GEN_SCRIPT, ["--only", gen_only, "--n-per-family", str(n_per_family),
-                                               "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"])
+        gen_result = _run_script_streaming(
+            GEN_SCRIPT, ["--only", gen_only, "--n-per-family", str(n_per_family),
+                          "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"],
+            on_line=_banner_reporter(tracker, gen_step, "generating..."))
         tracker.complete_step(
             gen_step,
             observation="Attack plan approved",
@@ -612,7 +758,19 @@ def main() -> int:
         eval_steps_needed = sorted({s for f in families for s in EVAL_STEP_FOR_FAMILY[f]})
         eval_only = ",".join(eval_steps_needed)
         bt_step = tracker.start_step("blue-team", f"Running evaluation/run_all_evaluations.py --only {eval_only} ...")
-        eval_result = _run_script(EVAL_SCRIPT, ["--only", eval_only, "--json"])
+
+        # LIVE PROGRESS. run_all_evaluations.py prints (and flushes) a
+        # banner around every detector it runs:
+        #     === voice_spoof (evaluation/eval_voice_spoof.py) ===
+        #     --- voice_spoof: OK (41.2s) ---
+        # Those markers are the only honest progress signal available --
+        # they come from the child actually starting and finishing real
+        # work, not from a timer pretending to know how long it will take.
+        # Anything that isn't a banner is ignored, so a detector printing
+        # a thousand lines costs zero extra Supabase writes.
+        eval_result = _run_script_streaming(
+            EVAL_SCRIPT, ["--only", eval_only, "--json"],
+            on_line=_banner_reporter(tracker, bt_step, "scoring..."))
         tracker.complete_step(
             bt_step,
             observation="New batch of real adversarial cases available",
