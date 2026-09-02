@@ -1022,3 +1022,84 @@ recomputation reproduces the printed precision, recall, f1, FPR and both split
 recalls exactly. ROC-AUC and PR-AUC are carried from the same run's output
 (they need the continuous scores, which the persisted rows do not hold); every
 field around them reconciled, which is the only reason they are trusted.
+
+## phishing_classifier — where the generalization gap actually comes from (added by hand, 2026-09-02, not script-generated — see header)
+
+The open question was whether the drop from 0.943 recall on difraud's own
+validation split to 0.75 on our held-out portion is overfitting, distribution
+shift, or a genuinely harder split. It is none of those. It is **one cue**.
+
+Recomputed from the persisted per-case rows in `evaluation_results` (joined to
+`attack_cases.mutation_params`), not from prose, and grouped by the mutation
+combination each case was generated from:
+
+| split | urgency | target | channel | language | n | mean score | flagged at 0.4629 |
+|---|---|---|---|---|---:|---:|---:|
+| train | high | bank_otp | sms | english | 62 | 0.985 | **100%** |
+| train | high | tax_refund | email | english | 50 | 0.996 | **100%** |
+| train | high | tech_support | email | english | 34 | 0.975 | **100%** |
+| train | high | delivery | sms | english | 54 | 0.812 | **100%** |
+| held_out | high | lottery_prize | sms | **hinglish** | 112 | 0.755 | **100%** |
+| held_out | **low** | employer_hr | email | english | 88 | 0.288 | **36.4%** |
+
+Collapsed to the one dimension that separates them:
+
+| class | n | mean | min | max | flagged |
+|---|---:|---:|---:|---:|---:|
+| fraud, urgency=high | 312 | 0.873 | 0.688 | 0.997 | 100% |
+| bonafide | 400 | 0.403 | 0.043 | 0.836 | 39.0% |
+| fraud, urgency=low | 88 | 0.288 | 0.112 | 0.612 | 36.4% |
+
+### What this rules out
+
+- **Not overfitting.** `train_phishing_classifier.py` trains on difraud's
+  phishing + sms domains and nothing else — it has never seen a single one of
+  our generated cases. The "train" and "held_out" portions above are equally
+  novel to this model, so memorization cannot explain a difference between
+  them.
+- **Not difraud-vs-our-generator distribution shift.** If the gap were about
+  our text looking unlike difraud's, it would depress both portions. All four
+  train-portion combinations are caught at 100%.
+- **Not the language.** The Hinglish combination was the obvious suspect for a
+  TF-IDF model built on English, and it was wrong: `lottery_prize / hinglish /
+  sms` is caught at 100%, mean 0.755. Code-mixing did not defeat the
+  vectorizer — the urgency and URL-shape hand features carry it.
+
+### What it is
+
+**The classifier is substantially an urgency detector.** Every combination
+carrying `urgency: high` is caught 100% of the time regardless of channel,
+impersonation target or language, with a minimum score of 0.688 — perfectly
+separated from the threshold. The single combination carrying `urgency: low`
+scores a mean of 0.288, which is *below the mean of the legitimate messages*
+(0.403). Low-urgency phishing does not merely evade the threshold; it lands
+inside the bonafide distribution, ranked as more innocuous than the average
+real message.
+
+`urgency` is one of the four split dimensions in `split_policy.FAMILIES`, and
+`held_out_only` is the only place `low` appears. So the held-out split did
+exactly the job Principle 7 designed it to do: it isolated a cue the model had
+silently come to depend on, which no same-distribution validation split could
+have surfaced — difraud's phishing corpus is overwhelmingly high-urgency, so
+0.943 recall there was measuring the easy case at full strength.
+
+### Consequences
+
+1. **The honest headline is per-cue, not overall.** Recall 0.875 overall is an
+   average across a 100% case and a 36% case. Quoting it as one number hides
+   the only failure mode this detector has.
+2. **The 39% false-positive rate has the same root.** Bonafide messages that
+   happen to be worded urgently (a real payment reminder, a delivery notice)
+   are scored fraudulent for the same reason low-urgency fraud is scored
+   benign. Both errors are the model reading urgency and calling it intent.
+3. **This is the strongest argument in the project for Section 6's fusion
+   design.** A signal that is excellent on one cue and inverted on another is
+   dangerous alone and useful in combination — a low-urgency employer-HR
+   phishing email still carries a mismatched sender domain and a beneficiary
+   the Customer Universe has never seen. The fix is not a better threshold for
+   this detector; no threshold exists that separates a 0.288 fraud from a
+   0.403 legitimate message.
+4. **The training-data fix is specific and cheap:** low-urgency phishing is
+   underrepresented in difraud's phishing/sms domains. Adding it (or
+   down-weighting the urgency hand features so TF-IDF content has to carry more
+   of the decision) is a targeted retrain, not a redesign.

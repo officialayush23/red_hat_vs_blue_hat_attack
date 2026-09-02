@@ -88,6 +88,19 @@ The GNN is shown at its real value. Round 5 added genuine graph-topology, tempor
 
 **A threshold picked on validation data did not transfer.** `phishing_classifier`'s decision threshold, chosen with `best_f1_threshold()` against real difraud validation data, produced a **39% false-positive rate** when the same frozen detector was re-scored against our own generated evidence-gate set. Nothing about the model changed — only the distribution it was asked to decide on.
 
+Recomputing that detector's scores per mutation combination showed why, and it
+is sharper than "distribution shift": **the classifier is substantially an
+urgency detector**. Every held-out combination carrying `urgency: high` is
+caught 100% of the time — Hinglish included, which was the obvious suspect and
+was wrong. The one combination carrying `urgency: low` scores a mean of 0.288,
+*below the mean of the legitimate messages* (0.403). Low-urgency phishing
+doesn't merely slip the threshold; it ranks as more innocuous than the average
+real message, and the same cue is what makes an urgently-worded genuine payment
+reminder a false positive. No threshold separates those two. The held-out split
+found this precisely because `urgency` is one of its split dimensions — a
+same-distribution validation set could not have, since difraud's phishing
+corpus is overwhelmingly high-urgency.
+
 The architectural response is in `docs/TECHNICAL_SPEC.md` §6: a detector's job is to output a *well-ranked continuous score*; the ALLOW / REVIEW / CHALLENGE / BLOCK decision is made one layer up, in fusion, where a miscalibrated signal gets corroborated or discounted by the others. No single detector's threshold is ever the final fraud decision. This is what lets an honestly-documented imperfect signal be a component rather than a liability.
 
 **Detection rate alone is a misleading headline.** The UI reports outcomes as a confusion matrix, never as a single "attacks blocked" number, because `detected` in this codebase means *the prediction was correct* — a correctly-approved legitimate transaction counts as detected. Conflating that with "blocked" inflates the number by thousands. A run that never reached the evaluation stage displays "not measured", never `0.0%`.

@@ -1,6 +1,8 @@
 # FraudShield — Session Handoff (Mastercard Innovation Challenge 2026)
 
-Prepared 2026-08-31. Purpose: give a fresh model (or a fresh session on any
+Prepared 2026-08-31, substantially rewritten 2026-09-02 (sections 4 onward --
+the previous version described the FastAPI backend, video-KYC and the
+frontend rewiring as unbuilt; all three now exist). Purpose: give a fresh model (or a fresh session on any
 model) everything needed to keep working on this project with zero lost
 context. Paste this whole file as the first message to the new session, or
 point it at `docs/SESSION_HANDOFF.md` in the repo.
@@ -10,8 +12,8 @@ point it at `docs/SESSION_HANDOFF.md` in the repo.
 **FraudShield** — a Kaggle submission for the Mastercard Innovation
 Challenge 2026. It's a multi-signal fraud detection system covering
 several distinct attack families (tabular transaction fraud, phishing,
-voice-cloning/spoofing, document/invoice tampering, and — not yet built —
-video-KYC deepfakes), each with its own detector, fused into a single
+voice-cloning/spoofing, document/invoice tampering, and video-KYC identity
+impersonation), each with its own detector, fused into a single
 risk score and decision (approve / review / challenge / block).
 
 Full architecture lives in `docs/TECHNICAL_SPEC.md` — read that for the
@@ -48,9 +50,12 @@ These were established over many prior sessions and must not be relaxed:
 5. **Colab is for one-time heavy-model training/eval only.** Production
    inference never calls Colab. Colab is used when local (Windows)
    GPU inference is broken/unreliable for a specific detector.
-6. **Frontend rewiring off `mockStore.js` is explicitly the LAST step.**
-   Do not touch the frontend until every backend capability is real and
-   evidence-gated.
+6. ~~**Frontend rewiring off `mockStore.js` is explicitly the LAST step.**~~
+   **RETIRED 2026-09-02.** This was a sequencing constraint, and it has been
+   satisfied: every backend capability is real and evidence-gated, and the
+   frontend now reads real Supabase data throughout. Kept here rather than
+   deleted so a future session doesn't re-derive it from an old transcript
+   and stall the UI work again.
 7. **Time-boxed passes per capability:** GNN gets 2-3 passes, voice gets
    2-3, KYC (document) gets 2-3, video-KYC gets 2-3. Don't over-invest in
    one capability at the expense of the others — the user explicitly
@@ -105,165 +110,168 @@ These were established over many prior sessions and must not be relaxed:
 ## 4. Real evidence-gate numbers on hand right now
 
 Treat these as a snapshot — always re-read `backend/defend/models/metrics.json`
-for the current, authoritative numbers before reporting a scoreboard.
+(and `model_registry` in Supabase, which `sync_model_registry.py` keeps in step
+with it) for the authoritative numbers before reporting a scoreboard. Verified
+against the live database on 2026-09-02.
 
-**GNN / mule_network (round 5, real Colab run, z-score normalization added):**
-- IBM AML ROC-AUC: 0.5669 → **0.7532**
-- F1: 0.0079 → **0.0258**
-- Recall: 0.0045 → **0.0746**
-- mule_network cross-domain recall: 0.0000 (n=400) → **0.0010 (n=1000)**
-  — still effectively zero; this is a real, structural limitation, not a
-  bug: the GNN is trained on IBM AML but evaluated cross-domain on
-  self-generated ring_gen.py graphs, with no analogous negative set to
-  calibrate a domain-appropriate threshold. Home-turf metrics genuinely
-  improved; cross-domain threshold-transfer did not.
-- percentile_vs_ibm_aml_test_scores (threshold-independent cross-domain
-  signal): 0.9793 → 0.9757 (flat — real but modest signal, ~97-98%,
-  didn't move meaningfully round-to-round).
-- **Status:** deprioritized behind voice/KYC/video-KYC per explicit user
-  decision. `gnn.pt` (round 5) has NOT yet been placed at
-  `backend/defend/models/gnn.pt` for a second independent local
-  verification pass — open loose end.
+**Cleared the evidence gate:**
 
-**Phishing classifier:**
-- Own-validation: 0.943 vs held-out: 0.72 — a known, flagged
-  generalization gap (`phishing_classifier_evidence_gate` in
-  `metrics.json`). Not yet investigated or worked on this session.
+| Signal | Model | P | R | F1 | n |
+|---|---|---:|---:|---:|---:|
+| transaction | lightgbm_adversarial_eval | 0.955 | 1.000 | 0.977 | 1,394,845 |
+| transaction | xgboost_adversarial_eval | 0.965 | 0.875 | 0.918 | 1,394,845 |
+| behavioral | autoencoder_adversarial_eval | 0.870 | 0.826 | 0.847 | 1,394,845 |
+| transaction | fusion_adversarial_eval | 0.969 | 1.000 | 0.984 | 1,394,845 |
+| voice | voice_spoof_detector | 0.966 | 0.950 | 0.958 | 204 |
+| document | document_consistency_detector | 0.938 | 1.000 | 0.968 | 680 |
+| text | phishing_classifier_evidence_gate | 0.882 | 0.875 | 0.879 | 800 |
+| identity | video_kyc_detector | 1.000 | 1.000 | 1.000 | **12** |
 
-**Voice spoof detector:**
-- Threshold-calibration bug fixed (`eval_voice_spoof.py` was hardcoded to
-  `threshold=0.5`, now uses `best_f1_threshold` on bonafide + train-split
-  spoof only, consistent with the project convention). **Not yet
-  independently re-run/confirmed by the user this session** — expected to
-  work fine locally (lighter model than the document detector), but no
-  real post-fix numbers in hand yet.
+**Did not clear it:** `gnn_colab_round5_reported` — recall 0.075 (up from
+round 4's 0.004, a real improvement to a signal that is still not usable).
+Mule-network detection currently rests on sequence features in the tabular
+models, not on the GNN. It is shown at its real value everywhere.
 
-**Document consistency detector (PaddleOCR-VL + QR cross-check):**
-- Round 1 (hardcoded 0.5 threshold): showed a 25% false-positive rate on
-  bonafide documents — plausibly just an uncalibrated cutoff, not a
-  detector limitation.
-- Round 2 (calibrated threshold via `best_f1_threshold`): **in progress,
-  not yet complete.** See Section 5 — this is the single most immediate
-  open item.
-- Local Windows inference (`paddleocr_env`) is currently broken with a
-  distinct new failure (`os error 1455`, a Windows paging-file/virtual-
-  memory commitment-limit error, occurring right at first inference after
-  a full successful model load) — different from the earlier documented
-  DLL-collision class of Windows/PaddleOCR issues. User explicitly chose
-  to skip debugging this locally and use Colab instead
-  (`notebooks/eval_document_consistency_colab.ipynb`).
+**Corpus:** 25,741 attack cases across 7 families, 30,102 scored
+`evaluation_results` rows, 7,661 cases carrying playable artifacts.
 
-**Video-KYC:** 0% built. Needs to be built from scratch — not yet started
-at all this session or prior ones per this handoff's knowledge.
+Two caveats that must travel with these numbers:
 
-**Tabular models (XGBoost, LightGBM, Autoencoder) for transaction_fraud,
-account_takeover, synthetic_identity:** established, fused via
-`backend/defend/fusion.py` (weights = each model's Stage-5 validation
-ROC-AUC, normalized to sum to 1, read fresh from `metrics.json` every
-call). No specific numbers restated here — read `metrics.json` directly
-for current values rather than trusting this document's memory of them.
+- **video_kyc's 1.000 is 12 cases.** It is labelled `provisional` in the
+  registry, on the Model Performance page, and in the README. Read it as "the
+  pipeline works end to end", never as "validated". `attack_cases` still has
+  **no `video_kyc_impersonation` family** — section C of the Colab notebook has
+  not completed a corpus-scale run, so there is nothing to backfill yet.
+- **phishing's 0.875 is an average across a 100% case and a 36% case.** See
+  §4a.
 
-## 5. Immediate next step (literally what to do first)
+### 4a. The phishing finding (resolved 2026-09-02)
 
-The document-consistency Colab run (`notebooks/eval_document_consistency_colab.ipynb`)
-is mid-flight, blocked by a real bug just fixed. Timeline:
+The long-open question — is the 0.943-own-validation vs 0.75-held-out drop
+overfitting, distribution shift, or a hard split? — is answered, from the
+persisted per-case rows rather than from prose. **It is none of those: the
+classifier is substantially an urgency detector.**
 
-1. Colab crashed scoring the first fraud image with
-   `FileNotFoundError: '/content/data\generated\document_attacks\held_out\...'`
-   — root cause: `image_path` values in the generated case JSON files were
-   written with Windows backslash separators (the data generator ran on
-   Windows), which Linux/Colab's `PurePosixPath` doesn't split on.
-2. Fixed in three places: the real repo's
-   `backend/evaluation/eval_document_consistency.py` (committed to the
-   real machine via the device bridge), the Colab notebook's embedded
-   copy of that same script (also committed), and — because the user's
-   live Colab tab doesn't pick up the local `.ipynb` edit automatically —
-   a standalone one-off patch cell was handed to the user to run directly
-   in their live Colab session, patching the already-written file on the
-   Colab VM's disk in place (no re-upload/reinstall/re-upload-zip needed).
-3. **As of this handoff, the user has NOT yet confirmed the patch cell
-   ran successfully or that the eval script completed.** This is the
-   very next thing to check when the conversation resumes: ask for /
-   read the output of (a) the patch cell confirming the line was fixed,
-   and (b) the re-run of the "Run the real evidence-gate script" cell.
-4. Once it succeeds, the notebook's last cell prints the recorded
-   `document_consistency_detector` JSON entry — same pattern used for the
-   GNN round 5 merge: the user pastes that JSON back, and it gets merged
-   into the real `backend/defend/models/metrics.json` (preserving all
-   other entries, following the existing `_colab_round5_reported`-style
-   naming convention already used for the GNN).
-5. After that, update `docs/EVALUATION_RESULTS.md` if the eval script's
-   own `_append_results_md` didn't already do it via the Colab run (it
-   should have — check).
+Every held-out combination with `urgency: high` is caught 100% (Hinglish
+included — that was the obvious suspect and it was wrong). The one combination
+with `urgency: low` scores a mean of 0.288, *below the mean of the legitimate
+messages* (0.403): it ranks as more innocuous than the average real message.
+The same cue produces the 39% false-positive rate, since an urgently-worded
+genuine payment reminder trips it. No threshold separates a 0.288 fraud from a
+0.403 legitimate message — which makes this the strongest concrete argument in
+the project for the Section 6 fusion design.
 
-## 6. Full pending task list, in rough priority order
+Full working, with the per-combination table, is at the end of
+`docs/EVALUATION_RESULTS.md`. The targeted fix is training data: low-urgency
+phishing is underrepresented in difraud's phishing/sms domains.
 
-1. **Finish document_consistency round 2** (Section 5 above) — get real
-   post-calibration recall/precision/FPR/threshold numbers, merge into
-   `metrics.json`.
-2. **Get `eval_voice_spoof.py` run locally** and confirm the threshold-fix
-   didn't break anything real — not yet confirmed this session.
-3. **Video-KYC — build from scratch.** Nothing exists yet. Needs its own
-   2-3 time-boxed passes per the standing convention (Section 2, item 7).
-   Figure out what "attack" means for this family (likely deepfake face
-   swap / synthetic video during a KYC liveness check), what pretrained
-   model or approach to use (Principle 6 precedent: prefer pretrained
-   inference over training from scratch where a good pretrained option
-   exists, as was done for voice_spoof and document_consistency), build
-   the detector, generate attack data, evidence-gate it.
-4. **Phishing classifier generalization gap** (0.943 own-val vs 0.72
-   held-out) — flagged, not investigated. Worth a pass: is this overfit,
-   a distribution-shift issue, or a genuinely hard held-out split?
-5. **GNN round 6 (if resumed later)** — place the round-5 `gnn.pt` at
-   `backend/defend/models/gnn.pt` and run `eval_gnn.py` locally as an
-   independent second verification pass of the Colab numbers. Currently
-   deprioritized behind the above per explicit user decision — don't
-   pick this back up unless the user asks or the above are done.
-6. **`backend/api/` (FastAPI) build** — doesn't exist yet. Deprioritized
-   behind finishing all detection capabilities first.
-7. **Frontend rewiring off `mockStore.js`** — explicitly the LAST step of
-   the whole project. Do not start this early.
-8. **Ongoing, every step:** report progress as the running "attacks
-   detected/defended/adapted against" scoreboard using real numbers from
-   `metrics.json`, after each unit of work — this is a standing
-   instruction, not a one-time task.
+## 5. What exists now (this changed a lot — read before planning)
 
-## 7. Key files to know
+Three things this handoff previously listed as unbuilt are built:
 
-- `backend/defend/models/metrics.json` — the scoreboard; single source of
-  truth for every model's real evidence-gate metrics.
-- `backend/defend/fusion.py` — real multi-signal fusion for the four
-  tabular attack families; ROC-AUC-weighted, decision bands (approve
-  ≤30 / review ≤60 / challenge ≤80 / block ≤100).
-- `backend/evaluation/` — `metrics.py` (shared metric computation +
-  `best_f1_threshold`), `supabase_results.py` (per-case persistence for
-  the evidence viewer), and one `eval_*.py` per detector family.
-- `backend/evaluation/eval_document_consistency.py` /
-  `backend/evaluation/eval_voice_spoof.py` — both just had their
-  threshold-calibration bug fixed this session (were hardcoded to 0.5).
-- `backend/defend/pretrained/document_consistency_detector.py` —
-  PaddleOCR-VL + QR cross-check logic; Windows-local inference currently
-  broken (`os error 1455`), Colab is the working path.
-- `notebooks/train_gnn_mule_network.ipynb` — GNN training, round 5 done.
-- `notebooks/eval_document_consistency_colab.ipynb` — the notebook
-  actively being debugged right now; see Section 5.
-- `docs/TECHNICAL_SPEC.md` — full system architecture and spec.
-- `docs/EVALUATION_RESULTS.md` — human-readable log of evidence-gate
-  results, auto-appended by each eval script.
-- `docs/FUTURE_INTEGRATIONS.md` — documents the PaddleOCR Windows
-  DLL-collision history and other deferred/future work.
-- `.gitignore` — note `data/generated/` is gitignored (all generated
-  attack data/images regenerate from scripts in `generate/`, not
-  committed) and there's a leftover `colab_document_fraud_package.tar.gz`
-  entry marked safe to delete (an earlier, now-superseded Colab transfer
-  package from 2026-08-30).
+- **`backend/api/` (FastAPI) exists and is deployed.** Live at
+  `https://red-hat-vs-blue-hat-attack.onrender.com`. Railway was the original
+  target and was abandoned after free-tier peak-hours deploy blocking on
+  `asia-southeast1`; Render is the live one. `GET /version` reports the commit
+  actually running, which is the fastest way to answer "is my fix deployed".
+- **Video-KYC is built and evidence-gated** (`defend/pretrained/
+  video_kyc_detector.py`, facenet-pytorch MTCNN + InceptionResnetV1) — at
+  n=12, see the caveat above.
+- **The frontend is fully rewired off `mockStore.js`** and reads real Supabase
+  data. Deployed on Vercel. Standing rule 6 in §2 is therefore **retired** — it
+  described a sequencing constraint that has been satisfied.
 
-## 8. How to talk to the user about this
+Also live: the war room (per-stage progress, per-detector substeps, artifact
+playback, a working stop button), a `/simulate` page that scores a visitor's
+own uploaded file through the real detectors, and a root `README.md`.
 
-The user (Ayush) wants real, working, evidence-gated results — not a
-demo. They give real pasted terminal/Colab output as evidence and expect
-diagnosis grounded in that evidence, not guesses. When genuinely
-uncertain about a bug's cause, ask for a diagnostic (a directory listing,
-a full traceback) rather than guessing a fix blind — this has been the
-effective pattern all session. When a guess turns out wrong, acknowledge
-it plainly and move on, don't over-apologize.
+## 6. Pending work, in rough priority order
+
+1. **Section C of the Colab notebook has never completed.** C1 was fixed twice
+   on 2026-09-02 (see §7) but the fixed cell has not been run to completion, so
+   there are no video-KYC cases in the corpus and the n=12 number stands alone.
+   This is the single biggest gap between what the system claims and what it
+   has measured.
+2. **Verify `/detectors` actually serves.** The live-scoring routes in
+   `api/main.py` were syntax- and name-checked but never executed — neither the
+   bridge VM nor the cloud sandbox could install FastAPI. Run
+   `uvicorn api.main:app --reload` from `backend/` and hit `/detectors` before
+   demoing that page.
+3. **`npm run build` before any frontend deploy.** The bridge cannot build:
+   `node_modules` holds Windows binaries and the bridge shell is Linux.
+4. **Low-urgency phishing retrain** (§4a) — the one concrete model improvement
+   with a known cause and a known fix.
+5. **GNN round 6** — place the round-5 `gnn.pt` at `backend/defend/models/
+   gnn.pt` and run `eval_gnn.py` locally as an independent second verification
+   of the Colab numbers. Explicitly deprioritized; don't pick it up unless
+   asked or everything above is done.
+6. **Rotate the Supabase and HF credentials** if not already done — they were
+   exposed in a screenshot on 2026-09-01. `.env` was never committed and is
+   gitignored, so this is precautionary, but it is not yet confirmed done.
+
+## 7. Bugs worth not re-learning
+
+- **Colab is Python 3.13.** Any pin without a cp313 wheel is unsatisfiable, and
+  under `pip install -q` it fails *silently* and exits 0. This burned three
+  cells: `numpy<2`, `torch==2.2.2`, `Pillow==10.2.0`. Worse, one attempt ran
+  `pip uninstall torch torchvision torchaudio` **before** a pin that could not
+  install, leaving a runtime with no torchvision at all. A failed install after
+  a successful uninstall is strictly worse than doing nothing. C1 now installs
+  `facenet-pytorch --no-deps`, repairs torchvision only if genuinely absent
+  (via an explicit torch→torchvision map), and proves health with a real
+  forward pass instead of a version assert.
+- **`?? 0` defaults turn "never measured" into "measured zero".** Runs stopped
+  before the evaluation stage rendered `Detection 0.0%`, `PRECISION 0.00`,
+  `0% of taxonomy`. Fixed with `runs.hasEvaluation`; anything rendering a
+  metric must check it first.
+- **`runs[0]` is the newest run, not the newest run with results.** The sidebar
+  keyed its whole Blue Team and Results sections to it, so those pages opened
+  empty. Use `useLatestEvaluatedRun()`.
+- **`detected` means the prediction was CORRECT**, not "blocked" — a correctly
+  approved legitimate transaction counts. Conflating the two inflates the
+  number by thousands.
+- **`subprocess.run(capture_output=True)` returns nothing until exit.** Long
+  stages looked hung. `_run_script_streaming()` in `agent_runner.py` streams
+  the per-detector banners the eval/generation scripts already print.
+- **Bare globs pick up `.storage_bundle.json`**, the marker `tools/
+  storage_sync.py` drops into every directory it manages. Filter
+  `not p.name.startswith(".")`. This has caused two separate multi-hour bugs.
+- **Windows backslash paths** in JSON written on Windows: `PurePosixPath`
+  doesn't split `\`. `.replace("\\", "/")` at the point of use.
+- **`git pull --ff-only` exits 128** on this repo — history was rewritten once
+  to strip commit trailers, so every SHA changed. Use `git fetch origin main`
+  + `git reset --hard origin/main`. The Colab clone cell already does.
+- **Backticks in a `git commit -m "…"` string get command-substituted by bash.**
+  Write the message to a file and use `-F`.
+
+## 8. Key files to know
+
+- `backend/defend/models/metrics.json` — the scoreboard; single source of truth.
+- `backend/orchestration/agent_runner.py` — the closed loop as one run.
+  `RunTracker` writes live progress into `campaign_runs.stage_results`.
+- `backend/api/main.py` — FastAPI: run control, stop, `/version`, `/detectors`.
+- `backend/evaluation/split_policy.py` — which mutation combinations are
+  training-allowed vs held-out-only. This file is what makes the "detects novel
+  fraud" claim defensible.
+- `backend/evaluation/` — `metrics.py` (`best_f1_threshold`),
+  `supabase_results.py` (per-case persistence), one `eval_*.py` per family.
+- `backend/defend/fusion.py` — ROC-AUC-weighted fusion; bands approve ≤30 /
+  review ≤60 / challenge ≤80 / block ≤100.
+- `frontend/src/services/api/` — every read goes to Supabase directly with the
+  anon key; `jobs.js` is the only module that calls the backend.
+- `notebooks/fraudshield_colab_master.ipynb` — sections A–E, GPU work.
+- `README.md` — the judge-facing entry point.
+- `docs/TECHNICAL_SPEC.md` — the frozen spec, 14 governing principles.
+- `docs/EVALUATION_RESULTS.md` — append-only; contains superseded and
+  contradictory numbers on purpose. It is the audit trail.
+
+## 9. How to talk to the user about this
+
+The user (Ayush) wants real, working, evidence-gated results — not a demo. They
+give real pasted terminal/Colab output as evidence and expect diagnosis
+grounded in that evidence, not guesses. When genuinely uncertain about a bug's
+cause, ask for a diagnostic (a directory listing, a full traceback) rather than
+guessing a fix blind — this has been the effective pattern throughout. When a
+guess turns out wrong, say so plainly and move on; don't over-apologize, and
+don't quietly re-guess. Several of the worst detours in this project came from
+a confident diagnosis that outran its evidence.
