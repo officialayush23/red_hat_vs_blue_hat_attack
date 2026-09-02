@@ -419,9 +419,9 @@
   },
   "gnn_adversarial_eval_local_reverify": {
     "metrics": {
-      "recall": 0.0018987341772151898,
+      "recall": 0.001937984496124031,
       "threshold": 0.822209894657135,
-      "n_cases": 1580
+      "n_cases": 2580
     },
     "note": "Local, independent re-run of the Colab-reported gnn_adversarial_eval recall -- see docs/DATASETS.md. Compare this number against gnn_adversarial_eval (from the Colab notebook) before trusting either one alone."
   },

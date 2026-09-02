@@ -1143,3 +1143,15 @@ cause.
    only then decide whether the retrain should target low-urgency text,
    link-free text, or both. Retraining now would be aiming at a cause that has
    not been established.
+
+## GNN (Task #33) -- local re-verification of the Colab-trained model
+
+- Independent, local re-run of the 2580 real held-out mule_network cases, using the frozen weights saved from notebooks/train_gnn_mule_network.ipynb.
+- recall=0.0019 at decision_threshold=0.8222 (threshold selected on IBM AML's own held-out split, see the notebook).
+- This is a second, independent check against the Colab run's own reported number in gnn_metrics_snippet.json -- see docs/DATASETS.md.
+
+## GNN (Task #33) -- local re-verification of the Colab-trained model
+
+- Independent, local re-run of the 2580 real held-out mule_network cases, using the frozen weights saved from notebooks/train_gnn_mule_network.ipynb.
+- recall=0.0019 at decision_threshold=0.8222 (threshold selected on IBM AML's own held-out split, see the notebook).
+- This is a second, independent check against the Colab run's own reported number in gnn_metrics_snippet.json -- see docs/DATASETS.md.
