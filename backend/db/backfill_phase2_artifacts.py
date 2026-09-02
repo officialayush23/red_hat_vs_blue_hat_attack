@@ -184,6 +184,74 @@ def _voice_bonafide_rows(client) -> list:
     return rows
 
 
+def _video_kyc_rows(client) -> list:
+    """video_kyc_impersonation cases -> attack_cases, with the video AND the
+    reference photo it was compared against uploaded to Storage.
+
+    2026-09-02: there was no persistence path for this family at all. grep
+    video_kyc across db/ and tools/ returned only sync_model_registry.py, and
+    attack_cases held zero rows for it while metrics.json reported
+    video_kyc_detector at 1.000 -- so section C's eval would have written
+    metrics and silently persisted nothing, since evaluation_results.case_id
+    is a foreign key into this table (the "480 scored, 0 persisted" failure
+    the notebook's A2 cell documents).
+
+    TWO things this family does differently from document/voice:
+
+      - attack_family is "video_kyc_impersonation" (what the generator
+        writes), not "video_kyc".
+      - the generator's case["customer_id"] is a PERSON NAME (the claimed
+        identity, e.g. the reference-photo stem), not a CUST-xxxxxx id.
+        attack_cases.customer_id is a foreign key into synthetic_customers,
+        so writing the name there would be rejected outright. It goes into
+        mutation_params.claimed_identity instead and the column stays NULL --
+        same convention the bonafide rows above use.
+
+    impostor_customer_id is ground truth and is deliberately NOT copied into
+    artifacts: artifacts is what the evidence viewer shows, and Principle 13
+    keeps ground truth out of anything a detector or a viewer reads as input.
+    It stays in mutation_params, alongside the tier, where the eval harness
+    already looks for it."""
+    rows = []
+    for path in sorted((GENERATED_DIR / "video_kyc_attacks").glob("*/*.json")):
+        raw = json.loads(path.read_text())
+        video_local = REPO_ROOT / raw["video_path"].replace("\\", "/")
+        photo_local = REPO_ROOT / raw["reference_photo_path"].replace("\\", "/")
+
+        video_url = photo_url = None
+        if video_local.exists():
+            video_url = _upload_file(
+                client, video_local, f"video_kyc/{raw['split_portion']}/{video_local.name}")
+        if photo_local.exists():
+            photo_url = _upload_file(
+                client, photo_local, f"video_kyc/reference/{photo_local.name}")
+
+        rows.append({
+            "id": raw["case_id"],
+            "attack_family": raw.get("attack_family", "video_kyc_impersonation"),
+            "mutation_params": {
+                **raw.get("mutation_params", {}),
+                "resolved_levels": raw.get("resolved_levels", {}),
+                "claimed_identity": raw.get("customer_id"),
+                "impostor_customer_id": raw.get("impostor_customer_id"),
+                "tier": raw.get("tier"),
+            },
+            "split_portion": raw["split_portion"],
+            "signals_expected": raw.get("signals_expected", ["video"]),
+            "source_dataset": None,
+            "is_fraud": raw["is_fraud"],
+            "customer_id": None,  # see docstring -- the generator's value is a name
+            "transaction_sequence": None,
+            "artifacts": {
+                "video_url": video_url,
+                "video_type": "video/mp4",
+                "reference_photo_url": photo_url,
+            },
+            "generated_by": "deterministic_v1",
+        })
+    return rows
+
+
 def _phishing_attack_rows() -> list:
     rows = []
     for path in sorted((GENERATED_DIR / "phishing_attacks").glob("*/*.json")):
@@ -259,14 +327,24 @@ def main() -> None:
     print(f"  {n} voice_scam rows upserted "
           f"({sum(1 for r in voice_rows if r['is_fraud'])} fraud, {sum(1 for r in voice_rows if not r['is_fraud'])} bonafide)")
 
+    print("Uploading video_kyc artifacts + backfilling attack_cases...")
+    video_rows = _video_kyc_rows(client)
+    if video_rows:
+        n = _upsert(client, "attack_cases", video_rows)
+        print(f"  {n} video_kyc_impersonation rows upserted "
+              f"({sum(1 for r in video_rows if r['is_fraud'])} fraud, "
+              f"{sum(1 for r in video_rows if not r['is_fraud'])} bonafide)")
+    else:
+        print("  no video_kyc_attacks cases on disk -- run generate/generate_video_kyc_attacks.py first")
+
     print("Backfilling phishing_scam attack_cases (no Storage upload -- text is the artifact)...")
     phish_rows = _phishing_attack_rows() + _phishing_bonafide_rows()
     n = _upsert(client, "attack_cases", phish_rows)
     print(f"  {n} phishing_scam rows upserted "
           f"({sum(1 for r in phish_rows if r['is_fraud'])} fraud, {sum(1 for r in phish_rows if not r['is_fraud'])} bonafide)")
 
-    total = len(doc_rows) + len(voice_rows) + len(phish_rows)
-    print(f"\nDone. {total} total attack_cases rows (document_fraud + voice_scam + phishing_scam, attack + bonafide).")
+    total = len(doc_rows) + len(voice_rows) + len(video_rows) + len(phish_rows)
+    print(f"\nDone. {total} total attack_cases rows (document_fraud + voice_scam + video_kyc_impersonation + phishing_scam, attack + bonafide).")
 
 
 if __name__ == "__main__":
