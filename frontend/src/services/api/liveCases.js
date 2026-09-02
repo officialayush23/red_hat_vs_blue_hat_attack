@@ -252,6 +252,18 @@ export async function getRunStats(sinceIso, campaignId) {
   // before evaluation_runs.config carried a campaign_id -- correct only while
   // one run is in flight, which is why it is not the first choice any more.
   const runIds = await getEvalRunIds(campaignId);
+  // THE TIME-WINDOW FALLBACK NEEDS AN ACTUAL TIME.
+  //
+  // campaignId comes straight from the URL, so it is present on the very
+  // first render; sinceIso comes from the run row, which has not loaded
+  // yet. The guard above passes on campaignId alone, and a run that has
+  // not written any evaluation_runs row yet has no runIds -- so this fell
+  // through to the time window and issued
+  //     ?select=id&created_at=gte.undefined
+  // six times per poll, every one a 400. Promise.all then rejected, the
+  // query returned no data, and the war room's per-run tiles sat at 0
+  // looking like a data problem rather than a malformed request.
+  if (!runIds.length && !sinceIso) return null;
   const scopedBy = runIds.length ? "campaign" : "time";
   const countOf = async (build) => {
     const { count, error } = await build();

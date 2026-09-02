@@ -38,6 +38,10 @@ export function useRunStats(sinceIso, campaignId, live = false) {
   return useQuery({
     queryKey: ["run-stats", sinceIso, campaignId],
     queryFn: () => getRunStats(sinceIso, campaignId),
+    // Belt and braces with getRunStats' own guard: campaignId alone is not
+    // enough to build a valid query until either the run's createdAt has
+    // loaded or it has written an evaluation_runs row. Firing early cost six
+    // 400s per poll.
     enabled: Boolean(sinceIso || campaignId),
     refetchInterval: live ? 4000 : false,
   });
