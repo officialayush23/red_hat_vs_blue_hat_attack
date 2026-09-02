@@ -61,6 +61,30 @@
   },
   "voice_spoof_detector": {
     "metrics": {
+      "threshold": 0.005574313458055258,
+      "precision": 0.9661016949152542,
+      "recall": 0.95,
+      "f1": 0.957983193277311,
+      "roc_auc": 0.9836309523809524,
+      "pr_auc": 0.9890544267294734,
+      "false_positive_rate": 0.047619047619047616,
+      "n_samples": 204,
+      "n_positive": 120,
+      "true_positives": 114,
+      "false_positives": 4,
+      "true_negatives": 80,
+      "false_negatives": 6
+    },
+    "model_id": "mo-thecreator/Deepfake-audio-detection",
+    "decision_threshold": 0.005574313458055258,
+    "n_bonafide": 84,
+    "n_spoof": 120,
+    "held_out_recall": 0.9666666666666667,
+    "train_recall": 0.9333333333333333,
+    "note": "pretrained inference, no training -- Principle 11 evidence-gate run. WINNER of the 2026-09-02 three-model bake-off over the identical 204 cases; supersedes garystafford/wav2vec2-deepfake-voice-detector, kept at voice_spoof_detector_garystafford_superseded. Beat the incumbent on every axis: recall 0.9500 vs 0.8500, precision 0.9661 vs 0.9107, FPR 0.0476 vs 0.1190, ROC-AUC 0.9836 vs 0.9251. Third challenger (Hemgg/Deepfake-audio-detection) did not load -- a real answer about that checkpoint, not a gap. PROVENANCE: the Colab run had no GITHUB_TOKEN so its metrics.json never reached the repo. Rather than retype the printed output, the confusion matrix is recomputed from the persisted per-case rows (run_id 69916bd3 = train, a1d2bbc8 = held_out): TP=114 FP=4 TN=80 FN=6 over 120 spoof + 84 bonafide -- the 84 bonafide are the shared negative baseline scored in BOTH splits, which is why 288 rows are 204 distinct cases. That reproduces the printed precision/recall/f1/FPR and both split recalls exactly. roc_auc and pr_auc are carried from that same run's output (they need the continuous scores, which the rows do not carry) -- every field around them reconciled, which is why they are trusted. Threshold calibrated via best_f1_threshold on bonafide + train-split spoof only, then applied unchanged to held_out."
+  },
+  "voice_spoof_detector_garystafford_superseded": {
+    "metrics": {
       "threshold": 0.9760430455207825,
       "precision": 0.8701298701298701,
       "recall": 0.8170731707317073,
@@ -80,7 +104,7 @@
     "n_spoof": 82,
     "held_out_recall": 0.8,
     "train_recall": 0.8333333333333334,
-    "note": "pretrained inference, no training -- evidence-gate run per Principle 11. Threshold calibrated via best_f1_threshold on bonafide + train-split spoof only (round 2), then applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default."
+    "note": "SUPERSEDED by mo-thecreator/Deepfake-audio-detection, which beat it on every axis over the identical 204 cases. Kept for the record, not for reporting. pretrained inference, no training -- evidence-gate run per Principle 11. Threshold calibrated via best_f1_threshold on bonafide + train-split spoof only (round 2), then applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default."
   },
   "document_consistency_detector": {
     "metrics": {

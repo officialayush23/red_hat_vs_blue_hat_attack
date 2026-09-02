@@ -989,3 +989,36 @@ construction (mismatched-over-comparable across four fields), so ROC-AUC and
 PR-AUC are computed over those five levels with ties counted at 0.5.
 
 16% is still high for production. Reported as measured, not as solved.
+
+## voice_spoof_detector -- three-model bake-off, n=204, winner promoted
+
+Identical 204 cases (120 spoof + 84 bonafide), thresholds calibrated the same
+way for each: best_f1_threshold on bonafide + train-split spoof only, then
+applied unchanged to held_out.
+
+| model | recall | precision | FPR | ROC-AUC | held_out recall |
+|---|---|---|---|---|---|
+| **mo-thecreator/Deepfake-audio-detection** | **0.9500** | **0.9661** | **0.0476** | **0.9836** | **0.9667** |
+| garystafford/wav2vec2-deepfake-voice-detector (incumbent) | 0.8500 | 0.9107 | 0.1190 | 0.9251 | 0.9333 |
+| Hemgg/Deepfake-audio-detection | did not load | | | | |
+
+The challenger wins on every axis, and the false-positive rate matters most
+here: 4 legitimate clips flagged instead of 10, on the same 84 bonafide files.
+That is real customer friction more than halved. Promoted to
+`voice_spoof_detector`; the incumbent is kept at
+`voice_spoof_detector_garystafford_superseded`.
+
+A challenger that fails to load is a real answer about that checkpoint, not a
+gap in the bake-off.
+
+PROVENANCE, because this entry was not written by the eval script: the Colab
+run had no GITHUB_TOKEN, so its `metrics.json` never reached the repo -- only
+the checkpoint cell's printed output did. The confusion matrix here is
+recomputed from the persisted per-case rows (`69916bd3` = train, `a1d2bbc8` =
+held_out): TP=114 FP=4 TN=80 FN=6. The 84 bonafide are the shared negative
+baseline and are scored in BOTH splits, which is why 288 rows are 204 distinct
+cases -- counting them twice would have inflated n and halved the FPR. That
+recomputation reproduces the printed precision, recall, f1, FPR and both split
+recalls exactly. ROC-AUC and PR-AUC are carried from the same run's output
+(they need the continuous scores, which the persisted rows do not hold); every
+field around them reconciled, which is the only reason they are trusted.
