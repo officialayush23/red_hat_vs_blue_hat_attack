@@ -58,6 +58,8 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from evaluation.librispeech_bonafide import MIN_DURATION_SEC, _duration_sec  # noqa: E402
+
 REPO_ROOT = BACKEND_DIR.parent
 OUT_DIR = REPO_ROOT / "data" / "generated" / "synthetic_customers"
 BONAFIDE_DIR = REPO_ROOT / "data" / "generated" / "voice_bonafide"
@@ -178,15 +180,67 @@ def _generate_customer(idx: int, rng: random.Random, bonafide_paths: list) -> di
     }
 
 
-def build_roster(n: int = N_CUSTOMERS, seed: int = SEED) -> list:
-    rng = random.Random(seed)
-    bonafide_paths = sorted(BONAFIDE_DIR.glob("librispeech_bonafide_*.wav"))
-    if not bonafide_paths:
+def usable_voice_refs() -> list:
+    """Bonafide clips long enough to be a voice-cloning reference.
+
+    2026-09-02: build_roster used a bare glob here, so two customers were
+    assigned 4.82s clips and generate_voice_attacks.py died mid-run on
+    Chatterbox's own precondition:
+
+        AssertionError: Audio prompt must be longer than 5 seconds!
+
+    fetch_bonafide_clips() already enforces MIN_DURATION_SEC and deliberately
+    LEAVES the too-short clips on disk keeping their index ("never
+    overwrite/reuse indices already on disk (incl. too-short ones)"), so a
+    bare glob over the directory picks up exactly the files that function
+    went out of its way to exclude. Reuse its threshold rather than declaring
+    a second one that can drift from it.
+
+    Selection is by index, not by rng draw, so filtering this list does not
+    perturb the seeded rng and every customer keeps its existing id."""
+    paths = sorted(
+        p for p in BONAFIDE_DIR.glob("librispeech_bonafide_*.wav")
+        if _duration_sec(p) >= MIN_DURATION_SEC
+    )
+    if not paths:
         raise FileNotFoundError(
-            f"No bonafide clips under {BONAFIDE_DIR}. Run "
+            f"No bonafide clips >= {MIN_DURATION_SEC}s under {BONAFIDE_DIR}. Run "
             f"generate/generate_voice_attacks.py first (it fetches these as a side effect)."
         )
-    return [_generate_customer(i, rng, bonafide_paths) for i in range(n)]
+    return paths
+
+
+def build_roster(n: int = N_CUSTOMERS, seed: int = SEED) -> list:
+    rng = random.Random(seed)
+    return [_generate_customer(i, rng, usable_voice_refs()) for i in range(n)]
+
+
+def repair_voice_refs() -> list:
+    """Reassign only the voice_refs that are missing or too short, in place.
+
+    A full regenerate would be wrong: the roster's ids are already the
+    customer_id on 20k+ attack_cases rows. This keeps every id and touches
+    only the broken field."""
+    roster = load_roster()
+    usable = usable_voice_refs()
+    repaired = 0
+    for idx, customer in enumerate(sorted(roster, key=lambda c: c["id"])):
+        ref = customer.get("voice_ref")
+        local = REPO_ROOT / ref.replace("\\", "/") if ref else None
+        ok = bool(local and local.exists() and _duration_sec(local) >= MIN_DURATION_SEC)
+        if ok:
+            continue
+        chosen = usable[idx % len(usable)]
+        customer["voice_ref"] = (
+            str(chosen.relative_to(REPO_ROOT)) if chosen.is_relative_to(REPO_ROOT) else str(chosen)
+        ).replace("\\", "/")
+        (OUT_DIR / f"{customer['id']}.json").write_text(json.dumps(customer, indent=2))
+        print(f"  {customer['id']}: {ref} -> {customer['voice_ref']} "
+              f"({_duration_sec(chosen):.2f}s)")
+        repaired += 1
+    print(f"voice_ref: {repaired} repaired, {len(roster) - repaired} already usable "
+          f"({len(roster)} customers total)")
+    return roster
 
 
 def load_roster() -> list:
@@ -226,6 +280,15 @@ def backfill_baselines() -> list:
 
 def main() -> None:
     from db.supabase_client import get_service_client
+
+    if "--repair-voice-refs" in sys.argv:
+        # Repair path: keep every existing customer id (they are the
+        # customer_id on 20k+ attack_cases rows), fix only broken voice_refs.
+        roster = repair_voice_refs()
+        client = get_service_client()
+        client.table("synthetic_customers").upsert(roster, on_conflict="id").execute()
+        print(f"Upserted {len(roster)} rows into Supabase synthetic_customers")
+        return
 
     if "--backfill-baselines" in sys.argv:
         # Repair path: keep every existing customer id and every parquet
