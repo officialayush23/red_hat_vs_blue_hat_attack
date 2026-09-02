@@ -288,3 +288,77 @@ meaningful gain consistent with the published GFP+XGBoost finding that
 motivated this work; **LightGBM was essentially flat** (PR-AUC 0.6078 ->
 0.6066) on the same features and same data -- an honest, mixed result, not
 uniform success across both tree models.
+
+## Candidate training data for the phishing generalization gap (researched 2026-09-02, nothing downloaded yet)
+
+**The problem this addresses.** `phishing_classifier` trains on difraud's
+phishing + sms domains and nothing else. Two consequences show up in real
+measurements rather than in theory:
+
+- Our own low-urgency, link-free generated cases are caught **36%** of the
+  time, scoring below the mean legitimate message (see EVALUATION_RESULTS).
+- Two ordinary real-world messages pasted into the `/simulate` page scored
+  **0.32** and **0.38**, both below the 0.463 operating point — and both
+  carried URLs, which is independent evidence that the earlier
+  "urgency detector" reading was too simple.
+
+The common factor is register: difraud's phishing corpus is long-form and
+high-pressure, and short, plain, conversational messages fall outside the
+distribution the model was fitted on. That is a training-data problem, and it
+is fixable with real labelled data rather than with a threshold change.
+
+**Why this does not violate Principle 7.** These are external, real,
+independently-labelled corpora used at Stage 5, exactly as difraud already is.
+The frozen model is still evaluated against *our own generated* held-out
+combinations, which none of these datasets contain. Adding them changes what
+the model learns from; it does not touch the adversarial test set, and the
+"detects novel fraud" claim is unaffected. Training on our own held-out cases
+would violate it — that remains off the table.
+
+### Candidates, in the order worth trying
+
+**1. `ealvaradob/phishing-dataset` (Hugging Face, Apache-2.0).** The obvious
+first move: it is an aggregation of four corpora — Enron-derived mail (18k+),
+an SMS set (5,971 messages: 638 smishing, 489 spam, 4,844 ham), URLs (800k+)
+and website HTML (80k). Binary labels, same shape as our current pipeline.
+Ship the `combined_reduced` config, not `combined_full`: URLs are ~97% of the
+full version and would swamp the text signal — which, given four of our ten
+hand features are URL features, is the specific way this could make the model
+worse while the aggregate metric improves.
+
+The SMS half is the part that matters here. 638 real smishing messages are
+short, plain and conversational — the register our detector currently misses.
+
+**2. SmishTank (Nasir et al., ACM CODASPY 2024; arXiv 2402.18430).**
+User-submitted real phishing SMS with screenshots and metadata. Smaller than
+the above but higher fidelity: these are messages people actually received and
+reported, not spam-corpus leftovers. The closest public thing to the failure
+mode we measured, and worth using as an *evaluation* set even if it is too
+small to train on.
+
+**3. Mendeley SMS phishing dataset (`f45bkkt8pr`).** A third, independent SMS
+source. Useful mainly as a cross-check: if recall on our low-urgency cases
+improves after training on (1) but not on (3), the improvement is dataset
+overfitting, not generalization.
+
+### How to use them without fooling ourselves
+
+The failure is specific, so the measurement has to be specific too. Aggregate
+recall on a new mixed corpus will go up almost regardless of what is added, and
+would tell us nothing.
+
+1. Keep difraud in the training pool; add (1)'s `combined_reduced`.
+2. Re-run the evidence gate **unchanged** and read the per-combination table,
+   not the headline — the number that matters is the low-urgency,
+   link-free combination's caught-rate, currently 36%.
+3. Re-score the two real-world messages that failed. They are now the
+   cheapest regression test this detector has.
+4. Hold (2) out entirely as a real-world evaluation set. A model trained on
+   (1) and evaluated on (2) is a genuine generalization claim; trained and
+   evaluated on the same aggregation, it is not.
+
+Also worth doing first, because it is free and de-confounds the existing
+finding: add URL presence as a real mutation dimension in `split_policy` so
+low-urgency-with-link and high-urgency-without-link cases exist at all. Until
+they do, no amount of new training data can tell us which cue the detector was
+actually leaning on.
