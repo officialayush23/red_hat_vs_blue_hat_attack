@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRun, getRun, listRuns } from "@/services/api/runs";
 
-const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed"]);
+// "stopped" belongs here: a run the user stopped is over. Leaving it out
+// left the war room spinning a live timer next to a "Stopped" badge --
+// 171:22 and counting on a run whose process had been dead for hours.
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "stopped"]);
 
 export function useRuns() {
   return useQuery({

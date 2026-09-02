@@ -431,8 +431,15 @@ async def stop_agent_run(run_id: str):
             stage = row.get("stage_results") or {}
             meta = dict(stage.get("meta") or {})
             was = meta.get("status")
+            now_iso = datetime.now(timezone.utc).isoformat()
             meta["status"] = "stopped"
-            meta["stoppedAt"] = datetime.now(timezone.utc).isoformat()
+            meta["stoppedAt"] = now_iso
+            # completedAt too, and not as a synonym: the war room's elapsed
+            # timer freezes on completedAt and nothing else, so a run marked
+            # stopped without it kept counting -- 171:22 and rising beside a
+            # "Stopped" badge. stoppedAt records HOW it ended; completedAt
+            # records THAT it ended, which is what the clock reads.
+            meta.setdefault("completedAt", now_iso)
             stage = {**stage, "meta": meta}
             (client.table("campaign_runs")
              .update({"stage_results": stage})

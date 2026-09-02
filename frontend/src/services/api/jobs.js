@@ -228,7 +228,7 @@ export async function probeApi(timeoutMs = 4000) {
 // Polls a status endpoint (getEvaluationRunStatus / getGenerationRunStatus)
 // until it reports a terminal status, calling onUpdate after every poll so
 // a caller can drive a progress UI. Returns the final state.
-const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed_to_launch"]);
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed_to_launch", "stopped"]);
 
 export async function pollRunUntilDone(getStatus, runId, { intervalMs = 2000, onUpdate } = {}) {
   for (;;) {

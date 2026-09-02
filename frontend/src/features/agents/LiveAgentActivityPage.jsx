@@ -15,7 +15,10 @@ import { useAgentSteps } from "@/hooks/useAgentActivity";
 // only to render progress against a known total, never to fabricate a
 // stage's content.
 const TOTAL_STAGES = 8;
-const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed"]);
+// "stopped" belongs here: a run the user stopped is over. Leaving it out
+// left the war room spinning a live timer next to a "Stopped" badge --
+// 171:22 and counting on a run whose process had been dead for hours.
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "stopped"]);
 
 export function LiveAgentActivityPage() {
   const { runId = "" } = useParams();
