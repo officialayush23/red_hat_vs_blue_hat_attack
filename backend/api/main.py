@@ -459,6 +459,47 @@ async def get_run_process_status(run_id: str):
     return state
 
 
+@app.get("/version")
+async def version():
+    """What commit is ACTUALLY running here.
+
+    2026-09-02: the Railway deployment sat 11 commits behind for hours while
+    the frontend called an endpoint that only existed in the newer code, and
+    the only way to guess what was live was reading a truncated commit title
+    off a dashboard card. Worse, Railway's "Redeploy" re-runs THAT
+    deployment's commit rather than the branch head, so a fresh timestamp is
+    not evidence of fresh code -- which is exactly how the stale build was
+    mistaken for a new one.
+
+    Railway injects RAILWAY_GIT_COMMIT_SHA at runtime, so this needs no build
+    step. `git rev-parse` is the fallback for a local uvicorn. Compare the sha
+    against `git log -1` and the question is answered in one request, with no
+    dashboard involved.
+
+    `stop_endpoint` is here deliberately: it is the specific route whose
+    absence produced a 404 that looked like a bug in the frontend."""
+    sha = (os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+           or os.environ.get("SOURCE_COMMIT")
+           or os.environ.get("GIT_COMMIT"))
+    origin = "env"
+    if not sha:
+        origin = "git"
+        try:
+            sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(BACKEND_DIR),
+                                 capture_output=True, text=True, timeout=5).stdout.strip() or None
+        except Exception:
+            sha = None
+    routes = {getattr(r, "path", "") for r in app.routes}
+    return {
+        "commit": sha,
+        "commit_source": origin if sha else "unavailable",
+        "branch": os.environ.get("RAILWAY_GIT_BRANCH"),
+        "deployed_at": os.environ.get("RAILWAY_DEPLOYMENT_ID"),
+        "stop_endpoint": "/runs/{run_id}/stop" in routes,
+        "route_count": len(routes),
+    }
+
+
 @app.get("/")
 async def root():
     """Service index.
@@ -476,6 +517,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "health": "GET /health",
+            "version": "GET /version",
             "latest_metrics": "GET /evaluations/latest",
             "start_evaluation": "POST /evaluations/run",
             "evaluation_status": "GET /evaluations/status/{run_id}",
