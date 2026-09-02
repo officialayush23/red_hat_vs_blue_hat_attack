@@ -71,9 +71,47 @@ So: rows are built and pre-flight-checked first, the run row is inserted as
 `failed` otherwise. A run in this table now means what it says.
 """
 
+import os
 from datetime import datetime, timezone
 
 from defend.fusion import decision_for as _decision_for  # noqa: E402  -- Section 6 decision bands, single source (defend/fusion.py)
+
+
+def explain_persistence_failure(exc: Exception) -> str:
+    """Turns a failed per-case persistence into advice that matches the
+    ACTUAL failure.
+
+    Every eval script prints the same three-line hint when persistence
+    raises, and that hint assumed the cause was a foreign-key rejection --
+    the failure mode that hid a 100% persistence loss on 2026-09-01. On
+    2026-09-02 the cause was instead a missing `import os` in THIS module,
+    added alongside the campaign_id stamping. The hint duly told the user
+    to re-run a backfill, which had nothing to do with it and would not
+    have helped.
+
+    So the advice is now derived from the exception type. A NameError or
+    AttributeError here is a bug in this file, not something the user's
+    data or environment can fix, and saying so is the difference between a
+    two-minute fix and an afternoon spent re-running backfills.
+    """
+    if isinstance(exc, (NameError, AttributeError, ImportError, TypeError)):
+        return ("This is a BUG IN THE PERSISTENCE CODE ITSELF "
+                "(evaluation/supabase_results.py), not a problem with your data, "
+                "your environment or your Supabase credentials. Re-running a "
+                "backfill will not help. Fix the code and re-run this eval -- "
+                "the scores above are real, they just never reached the database.")
+    text = f"{exc}".lower()
+    if "foreign key" in text or "violates" in text or "23503" in text:
+        return ("A foreign key on case_id was rejected: this family's cases are missing "
+                "from attack_cases. Run `python generate/run_all_generation.py --only "
+                "backfill_attack_cases,backfill_phase2_artifacts` and re-run this eval.")
+    if "jwt" in text or "auth" in text or "credential" in text or "401" in text:
+        return ("Supabase rejected the credentials. Check SUPABASE_URL and "
+                "SUPABASE_SERVICE_ROLE_KEY in .env -- the service-role key is the one "
+                "that can write, and it may have been rotated.")
+    return ("Cause not recognised. The scores above are real and metrics.json was "
+            "written; only the per-case rows were lost. Re-run this eval once the "
+            "cause below is addressed.")
 
 
 # Detectors whose score() is a calibrated probability in [0, 1] and can

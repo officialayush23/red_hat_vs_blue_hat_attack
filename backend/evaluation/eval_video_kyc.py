@@ -51,7 +51,7 @@ import numpy as np  # noqa: E402
 from db.supabase_client import get_service_client  # noqa: E402
 from defend.pretrained.video_kyc_detector import VideoKycDetector  # noqa: E402
 from evaluation.metrics import best_f1_threshold, compute_binary_metrics, record_result  # noqa: E402
-from evaluation.supabase_results import record_run_and_results  # noqa: E402
+from evaluation.supabase_results import explain_persistence_failure, record_run_and_results  # noqa: E402
 
 REPO_ROOT = BACKEND_DIR.parent
 CASE_DIR = REPO_ROOT / "data" / "generated" / "video_kyc_attacks"
@@ -209,10 +209,11 @@ def main() -> None:
         print("\n  !! SUPABASE PERSISTENCE FAILED -- metrics.json was still written, but NO "
               "per-case rows reached the database.", flush=True)
         print(f"  !! {type(exc).__name__}: {exc}", flush=True)
-        print("  !! If this mentions a foreign key on case_id, this family's cases are missing "
-              "from attack_cases: run `python generate/run_all_generation.py "
-              "--only backfill_attack_cases,backfill_phase2_artifacts` and re-run this eval.",
-              flush=True)
+        # Advice derived from the exception TYPE, not a fixed guess. The old
+        # fixed hint pointed at a backfill for every failure -- including a
+        # NameError inside supabase_results.py itself, which no backfill
+        # could have fixed.
+        print(f"  !! {explain_persistence_failure(exc)}", flush=True)
         print(f"  Supabase per-case persistence skipped (non-fatal): {exc}", file=sys.stderr)
 
 

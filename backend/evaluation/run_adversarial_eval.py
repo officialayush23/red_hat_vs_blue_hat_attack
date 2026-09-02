@@ -63,7 +63,7 @@ import pandas as pd  # noqa: E402
 from defend.train.dataset import load_training_pool, train_val_split  # noqa: E402
 from defend.train.preprocessor import TabularPreprocessor  # noqa: E402
 from evaluation.metrics import compute_binary_metrics, record_result  # noqa: E402
-from evaluation.supabase_results import record_run_and_results  # noqa: E402
+from evaluation.supabase_results import explain_persistence_failure, record_run_and_results  # noqa: E402
 
 REPO_ROOT = BACKEND_DIR.parent
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
@@ -248,9 +248,9 @@ def _persist_to_supabase(model_name: str, threshold: float, held_out_df, held_sc
         print("\n  !! SUPABASE PERSISTENCE FAILED -- metrics.json / EVALUATION_RESULTS.md were "
               "still written, but NO per-case rows reached the database.", flush=True)
         print(f"  !! {type(exc).__name__}: {exc}", flush=True)
-        print("  !! Fix: python generate/run_all_generation.py "
-              "--only backfill_attack_cases,backfill_phase2_artifacts   (then re-run this eval)",
-              flush=True)
+        # Advice derived from the exception TYPE, not a fixed guess -- see
+        # explain_persistence_failure()'s docstring for the run this fixed.
+        print(f"  !! {explain_persistence_failure(exc)}", flush=True)
         print(f"  Supabase per-case persistence skipped (non-fatal): {exc}", file=sys.stderr)
 
 
