@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ActivityIcon,
@@ -6,11 +6,13 @@ import {
   GaugeIcon,
   LoaderCircleIcon,
   RadioIcon,
+  SquareIcon,
   ZapIcon,
 } from "lucide-react";
 import { AttackStream, StreamLegend } from "@/components/warroom/AttackStream";
 import { ResizeHandle } from "@/components/shared/ResizablePanel";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
+import { stopDefenseRun } from "@/services/api/jobs";
 import { AgentStepList } from "@/components/shared/AgentStepList";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -106,6 +108,26 @@ export function WarRoomPage() {
     return c;
   }, [cases]);
 
+  // Stopping a run is a real action with a real consequence, so it reports
+  // what actually happened rather than optimistically flipping the badge:
+  // the endpoint kills the process tree AND marks campaign_runs, and either
+  // half can fail independently. The run's status then comes back through
+  // the normal Supabase poll like any other status change.
+  const [stopState, setStopState] = useState(null);
+  const handleStop = useCallback(async () => {
+    setStopState("stopping");
+    try {
+      const res = await stopDefenseRun(runId);
+      setStopState(
+        typeof res?.supabase === "string" && res.supabase.startsWith("FAILED")
+          ? "partial"
+          : "stopped",
+      );
+    } catch {
+      setStopState("error");
+    }
+  }, [runId]);
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       {/* ---- Command bar ---- */}
@@ -151,6 +173,27 @@ export function WarRoomPage() {
             {elapsed ? <span className="font-mono tabular-nums">· {elapsed}</span> : null}
           </Badge>
         ) : null}
+
+        {isRunning && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleStop}
+            disabled={stopState === "stopping" || stopState === "stopped"}
+            className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10"
+          >
+            <SquareIcon className="size-3.5" />
+            {stopState === "stopping" ? "Stopping…" : stopState === "stopped" ? "Stopped" : "Stop run"}
+          </Button>
+        )}
+        {stopState === "partial" && (
+          <span className="text-[11px] text-amber-600 dark:text-amber-400">
+            process killed, but the run row could not be marked — it may still show as live
+          </span>
+        )}
+        {stopState === "error" && (
+          <span className="text-[11px] text-destructive">stop failed — is the backend running?</span>
+        )}
 
         <span className="hidden font-mono text-[11px] text-muted-foreground lg:inline">{runId}</span>
       </header>

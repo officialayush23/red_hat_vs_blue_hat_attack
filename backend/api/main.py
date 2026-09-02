@@ -154,11 +154,20 @@ def _spawn(args: list, cwd: str) -> subprocess.Popen:
     pushed onto a worker thread with asyncio.to_thread so the event loop
     is never blocked (the whole point of the original async design).
     """
+    # Own process GROUP, deliberately. A run spawns a tree -- agent_runner.py
+    # -> run_all_generation.py / run_all_evaluations.py -> one eval_*.py per
+    # step -- and killing only the parent orphans whatever is actually burning
+    # the CPU. A group (Windows) / session (POSIX) gives /runs/{id}/stop
+    # something it can terminate as a unit.
+    if os.name == "nt":
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+        extra = {"creationflags": flags}
+    else:
+        extra = {"start_new_session": True}
     return subprocess.Popen(
         args, cwd=cwd,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        # Windows: don't pop a console window for the child.
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+        **extra,
     )
 
 
@@ -347,6 +356,71 @@ async def start_agent_run(req: StartAgentRunRequest):
 
     asyncio.create_task(_launch())
     return {"run_id": run_id, "status": "launched"}
+
+
+def _kill_tree(pid: int) -> str:
+    """Kill a process and everything it spawned. Returns what was done.
+
+    Windows has no process-group signal that reaches grandchildren reliably
+    from Python, so taskkill /T /F is used there -- it is the only thing that
+    actually walks the tree. POSIX gets a SIGTERM to the session, then SIGKILL
+    if it is still alive after a grace period."""
+    if os.name == "nt":
+        proc = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True, text=True,
+        )
+        return f"taskkill rc={proc.returncode} {proc.stdout.strip() or proc.stderr.strip()}"
+    import signal
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return "already gone"
+    time.sleep(3)
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        return "SIGTERM then SIGKILL"
+    except ProcessLookupError:
+        return "SIGTERM"
+
+
+@app.post("/runs/{run_id}/stop")
+async def stop_agent_run(run_id: str):
+    """Stop a running defense run and say so in Supabase.
+
+    Until 2026-09-02 there was no way to stop a run at all -- a war-room run
+    that had wandered into a step which could not succeed simply held the UI
+    at "Running" until its per-step timeout expired, and the only recourse was
+    killing uvicorn. There is no honest demo story in that.
+
+    Two halves, and the second matters as much as the first: kill the process
+    tree, THEN mark campaign_runs so the frontend (which reads that table
+    directly, not this API) stops showing the run as live. A killed process
+    that leaves a row saying "running" forever is the ghost-run failure mode
+    again, in a different table."""
+    state = _orch_runs.get(run_id)
+    killed = "no local process on record"
+    if state and state.get("pid") and state.get("status") == "running":
+        killed = await asyncio.to_thread(_kill_tree, state["pid"])
+        state["status"] = "stopped"
+        state["finished_at"] = time.time()
+
+    marked = None
+    try:
+        from db.supabase_client import get_service_client
+        client = await asyncio.to_thread(get_service_client)
+        await asyncio.to_thread(
+            lambda: client.table("campaign_runs")
+            .update({"status": "stopped"})
+            .eq("campaign_id", run_id)
+            .execute()
+        )
+        marked = "campaign_runs.status = stopped"
+    except Exception as exc:
+        # Report it. A stop that half-worked must not look like a clean stop.
+        marked = f"FAILED to mark campaign_runs: {type(exc).__name__}: {exc}"
+
+    return {"run_id": run_id, "process": killed, "supabase": marked}
 
 
 @app.get("/runs/{run_id}/process-status")

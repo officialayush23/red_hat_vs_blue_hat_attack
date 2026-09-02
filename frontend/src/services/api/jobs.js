@@ -158,6 +158,15 @@ export async function startDefenseRun({ objective, scope, severity, scenarioCoun
   });
 }
 
+// POST /runs/:runId/stop — kill the run's whole process tree AND mark
+// campaign_runs.status = 'stopped' so the UI stops showing it as live.
+// Before this existed there was no way to end a run at all: one that had
+// wandered into a step that could not succeed held the war room at
+// "Running" until a 30-minute per-step timeout expired.
+export async function stopDefenseRun(runId) {
+  return apiPost(`/runs/${runId}/stop`, {});
+}
+
 // GET /runs/:runId/process-status — raw subprocess launch/exit log, a
 // fallback for diagnosing a run that never wrote a campaign_runs row at
 // all (e.g. missing Supabase credentials on the backend). Real progress

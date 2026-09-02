@@ -52,8 +52,17 @@ export function RunsListPage() {
               </TableHeader>
               <TableBody>
                 {filtered?.map(run => <TableRow key={run.id} className="cursor-pointer">
+                    {/* A RUNNING run must land in the war room, not on a
+                        results page that can only show zeros because the run
+                        has not written its aggregates yet. Until 2026-09-02
+                        every row went to /results, so /runs/:id/live -- the
+                        one screen built to watch a live run -- was reachable
+                        only by typing the URL. */}
                     <TableCell className="font-medium">
-                      <Link to={`/runs/${run.id}/results`} className="hover:underline">
+                      <Link
+                        to={run.status === "running" ? `/runs/${run.id}/live` : `/runs/${run.id}/results`}
+                        className="hover:underline"
+                      >
                         {run.id}
                       </Link>
                     </TableCell>
@@ -68,7 +77,14 @@ export function RunsListPage() {
                       +{run.improvementPct.toFixed(1)}
                     </TableCell>
                     <TableCell>
-                      <RunStatusBadge status={run.status} />
+                      <div className="flex items-center gap-2">
+                        <RunStatusBadge status={run.status} />
+                        {run.status === "running" && (
+                          <Button asChild size="sm" variant="outline" className="h-6 px-2 text-[11px]">
+                            <Link to={`/runs/${run.id}/live`}>Watch live</Link>
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>)}
               </TableBody>
