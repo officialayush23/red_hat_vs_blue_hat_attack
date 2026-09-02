@@ -15,6 +15,7 @@ import { ReportPage } from "@/features/reports/ReportPage";
 import { ArchitecturePage } from "@/features/architecture/ArchitecturePage";
 import { WarRoomPage } from "@/features/warroom/WarRoomPage";
 import { CustomerUniversePage } from "@/features/customers/CustomerUniversePage";
+import { SimulatePage } from "@/features/simulate/SimulatePage";
 export const router = createBrowserRouter([{
   // The war room is a deliberate full-bleed break-out from AppShell's
   // max-w-6xl content column: it IS the screen you land on the moment a
@@ -62,6 +63,9 @@ export const router = createBrowserRouter([{
   }, {
     path: "customers",
     element: <CustomerUniversePage />
+  }, {
+    path: "simulate",
+    element: <SimulatePage />
   }, {
     path: "performance",
     element: <ModelPerformancePage />

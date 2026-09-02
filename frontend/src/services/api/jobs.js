@@ -238,3 +238,52 @@ export async function pollRunUntilDone(getStatus, runId, { intervalMs = 2000, on
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
+
+// ---- Live detector scoring ("simulate your own data") --------------------
+//
+// These three call backend/api/main.py's /detectors routes. They are the
+// only place in the frontend that uploads a file, and they exist so a judge
+// can hand a detector something it has never seen instead of taking the
+// evidence-gate table on trust.
+//
+// Every one of them goes through assertApi(), so on a replay-mode deploy
+// (no VITE_API_BASE_URL) they fail loudly rather than appearing to work.
+
+export async function listDetectors() {
+  assertApi("/detectors");
+  const res = await fetch(`${API_BASE}/detectors`);
+  if (!res.ok) throw new Error(`GET /detectors failed (${res.status})`);
+  const body = await res.json();
+  return body.detectors ?? [];
+}
+
+export async function scoreText(detectorId, text) {
+  return apiPost(`/detectors/${detectorId}/score-text`, { text });
+}
+
+// Multipart, so it cannot go through apiPost's JSON body. `reference` is
+// only used by video_kyc, which compares a submitted video against the
+// customer's reference photo -- one file alone cannot express an identity
+// mismatch, so the endpoint rejects it rather than scoring something
+// meaningless.
+export async function scoreFile(detectorId, file, reference) {
+  assertApi(`/detectors/${detectorId}/score`);
+  const form = new FormData();
+  form.append("file", file);
+  if (reference) form.append("reference", reference);
+  const res = await fetch(`${API_BASE}/detectors/${detectorId}/score`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    let message = detail;
+    try {
+      message = JSON.parse(detail).detail ?? detail;
+    } catch {
+      /* a non-JSON error body is still worth showing verbatim */
+    }
+    throw new Error(message || `POST /detectors/${detectorId}/score failed (${res.status})`);
+  }
+  return res.json();
+}

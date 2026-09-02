@@ -1,4 +1,4 @@
-import { ActivityIcon, FileTextIcon, GaugeIcon, LayoutDashboardIcon, ListChecksIcon, Network, PlusCircleIcon, RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
+import { ActivityIcon, FileTextIcon, FlaskConicalIcon, GaugeIcon, LayoutDashboardIcon, ListChecksIcon, Network, PlusCircleIcon, RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
 import { useLatestEvaluatedRun } from "@/hooks/useRuns";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar as SidebarPrimitive, SidebarGroup, SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
@@ -87,6 +87,9 @@ export function Sidebar() {
         <SidebarGroup title="Results">
           <SidebarMenuButton to={runLink("results")} icon={GaugeIcon}>
             Run Results
+          </SidebarMenuButton>
+          <SidebarMenuButton to="/simulate" icon={FlaskConicalIcon}>
+            Simulate Your Data
           </SidebarMenuButton>
           <SidebarMenuButton to="/performance" icon={GaugeIcon}>
             Model Performance

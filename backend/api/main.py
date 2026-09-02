@@ -59,7 +59,10 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+import importlib
+import tempfile
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -507,6 +510,355 @@ async def version():
     }
 
 
+# ---------------------------------------------------------------------------
+# Live scoring -- "run our detectors on YOUR file"
+# ---------------------------------------------------------------------------
+#
+# A judge should not have to take the evidence-gate numbers on trust. These
+# two routes let them hand a detector something it has never seen and watch
+# it score, in the same code path the evaluation harness uses.
+#
+# Principle 13 is preserved by construction: every score() below takes a
+# file path or a string and nothing else. There is no field in this API
+# through which a label could reach a detector even if a caller tried.
+#
+# What this endpoint deliberately does NOT return is a verdict. Each
+# detector reports a continuous score and, separately, the operating point
+# its own evidence-gate run calibrated -- because the ALLOW / REVIEW /
+# CHALLENGE / BLOCK decision belongs to the fusion layer with Customer
+# Universe context, not to one signal (TECHNICAL_SPEC.md section 6). The
+# phishing threshold that moved a 4% false-positive rate to 39% when the
+# distribution changed is exactly why.
+
+_DETECTOR_CACHE: dict = {}
+
+# registry_id keys straight into model_registry, so the frontend pairs each
+# detector with the same precision/recall/n_samples row the Model
+# Performance page reads. One source of truth for the evidence; this file
+# does not restate any number it would then have to keep in sync.
+DETECTOR_SPECS = [
+    {
+        "id": "voice_spoof",
+        "label": "Voice spoof (wav2vec2)",
+        "modality": "voice",
+        "registry_id": "voice_spoof_detector",
+        "input": "file",
+        "accepts": [".wav", ".mp3", ".flac", ".ogg", ".m4a"],
+        "hint": "An audio clip of someone speaking. Scores how synthetic the speech sounds.",
+        "score_means": "1.0 = confident synthetic speech, 0.0 = confident real recording",
+    },
+    {
+        "id": "document_consistency",
+        "label": "Document consistency (rapidocr + QR)",
+        "modality": "document",
+        "registry_id": "document_consistency_detector",
+        "input": "file",
+        "accepts": [".png", ".jpg", ".jpeg", ".webp"],
+        "hint": "An invoice image carrying a QR code. Reads the printed fields and cross-checks them against the QR payload.",
+        "score_means": "fraction of comparable fields that disagree; 0.5 means the detector abstained",
+    },
+    {
+        "id": "phishing_text",
+        "label": "Phishing text (TF-IDF + LogisticRegression)",
+        "modality": "text",
+        "registry_id": "phishing_classifier_evidence_gate",
+        "input": "text",
+        "accepts": [],
+        "hint": "Paste a suspicious email or SMS. Scored on wording, urgency, credential asks and URL shape.",
+        "score_means": "1.0 = confident phishing, 0.0 = confident legitimate",
+    },
+    {
+        "id": "video_kyc",
+        "label": "Video KYC identity match (FaceNet)",
+        "modality": "identity",
+        "registry_id": "video_kyc_detector",
+        "input": "pair",
+        "accepts": [".mp4", ".mov", ".webm"],
+        "hint": "A selfie video plus the reference photo it should match. Scores identity mismatch.",
+        "score_means": "1.0 = confident different person, 0.0 = confident same person",
+    },
+]
+
+_SPEC_BY_ID = {d["id"]: d for d in DETECTOR_SPECS}
+
+
+def _detector_threshold(registry_id: str):
+    """The operating point THIS detector's own evidence-gate run calibrated.
+
+    Read from defend/models/metrics.json rather than hardcoded here, so a
+    re-run that moves the threshold moves it everywhere at once. Returns
+    None when the model has no recorded run -- in which case the UI shows
+    the score with no reference line, which is the honest rendering of
+    "we have never calibrated this".
+    """
+    try:
+        blob = json.loads((BACKEND_DIR / "defend" / "models" / "metrics.json").read_text())
+    except Exception:
+        return None
+    entry = blob.get(registry_id) or {}
+    metrics = entry.get("metrics") or {}
+    return entry.get("decision_threshold", metrics.get("threshold"))
+
+
+def _load_detector(detector_id: str):
+    """Imports and constructs a detector, caching the instance.
+
+    Import is separated from construction on purpose. Importing is cheap
+    and tells us whether this deployment has the dependency at all;
+    constructing downloads model weights and can take tens of seconds, so
+    it happens on first use and only once. The import error text is
+    surfaced verbatim -- "No module named 'facenet_pytorch'" is a far more
+    useful answer than "unavailable".
+    """
+    if detector_id in _DETECTOR_CACHE:
+        return _DETECTOR_CACHE[detector_id]
+
+    if detector_id == "voice_spoof":
+        from defend.pretrained.voice_spoof_detector import VoiceSpoofDetector
+        obj = VoiceSpoofDetector()
+    elif detector_id == "document_consistency":
+        from defend.pretrained.document_consistency_detector import DocumentConsistencyDetector
+        obj = DocumentConsistencyDetector()
+    elif detector_id == "video_kyc":
+        from defend.pretrained.video_kyc_detector import VideoKycDetector
+        obj = VideoKycDetector()
+    elif detector_id == "phishing_text":
+        import joblib
+        path = BACKEND_DIR / "defend" / "models" / "phishing_classifier.joblib"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{path.name} is not in this deployment. Train it with "
+                f"defend/train/train_phishing_classifier.py."
+            )
+        obj = joblib.load(path)
+    else:
+        raise KeyError(detector_id)
+
+    _DETECTOR_CACHE[detector_id] = obj
+    return obj
+
+
+def _detector_available(detector_id: str):
+    """(available, reason) -- PROBED, never asserted.
+
+    This deployment genuinely cannot run every detector: the Docker image
+    excludes facenet-pytorch because it hard-pins torch<2.3 while the
+    voice-spoof wav2vec2 detector needs transformers>=5, which needs
+    torch>=2.5. Those two cannot share one interpreter, and pretending
+    otherwise here would produce a 500 at the moment a judge clicks the
+    button. So the check is a real import, and an unavailable detector says
+    which dependency is missing and why.
+    """
+    try:
+        if detector_id == "voice_spoof":
+            importlib.import_module("transformers")
+            importlib.import_module("librosa")
+        elif detector_id == "document_consistency":
+            importlib.import_module("cv2")
+            importlib.import_module("rapidocr_onnxruntime")
+        elif detector_id == "video_kyc":
+            importlib.import_module("facenet_pytorch")
+        elif detector_id == "phishing_text":
+            importlib.import_module("joblib")
+            if not (BACKEND_DIR / "defend" / "models" / "phishing_classifier.joblib").exists():
+                return False, "phishing_classifier.joblib is not in this deployment"
+        else:
+            return False, "unknown detector"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, ""
+
+
+@app.get("/detectors")
+async def list_detectors():
+    """What can actually be run against an uploaded file, right here.
+
+    Availability is probed per request rather than cached at boot: it is
+    cheap (an import of something already imported), and a cached "yes"
+    that later became a "no" is the kind of stale claim this project
+    spends most of its effort avoiding.
+    """
+    out = []
+    for spec in DETECTOR_SPECS:
+        available, reason = _detector_available(spec["id"])
+        out.append({
+            **spec,
+            "available": available,
+            "unavailable_reason": reason,
+            "threshold": _detector_threshold(spec["registry_id"]),
+            "loaded": spec["id"] in _DETECTOR_CACHE,
+        })
+    return {"detectors": out}
+
+
+class ScoreTextRequest(BaseModel):
+    text: str
+
+
+@app.post("/detectors/{detector_id}/score-text")
+async def score_text(detector_id: str, body: ScoreTextRequest):
+    """Scores pasted text. Only phishing_text takes this input shape."""
+    spec = _SPEC_BY_ID.get(detector_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"No detector '{detector_id}'")
+    if spec["input"] != "text":
+        raise HTTPException(status_code=400,
+                            detail=f"{detector_id} scores files, not text -- POST to /detectors/{detector_id}/score")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty text")
+
+    available, reason = _detector_available(detector_id)
+    if not available:
+        raise HTTPException(status_code=503, detail=f"{detector_id} unavailable here -- {reason}")
+
+    t0 = time.monotonic()
+    try:
+        bundle = _load_detector(detector_id)
+        from scipy.sparse import hstack
+        from defend.text_features import FEATURE_NAMES, build_hand_features
+        vectorizer, model = bundle["vectorizer"], bundle["model"]
+        X = hstack([vectorizer.transform([text]), build_hand_features([text])]).tocsr()
+        score = float(model.predict_proba(X)[:, 1][0])
+        # Which hand-built signals actually fired -- the detector's own
+        # reasoning trace, so a judge sees WHY, not just a number.
+        row = build_hand_features([text]).toarray()[0]
+        # Nonzero features only, named -- the same trace
+        # eval_phishing_classifier._evidence_for() builds, so the demo and
+        # the harness explain a score the same way. A clean message shows
+        # an empty list rather than a wall of zeros.
+        evidence = [f"{name}={value:.3g}"
+                    for name, value in zip(FEATURE_NAMES, row) if value]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
+
+    return {
+        "detector": detector_id,
+        "score": score,
+        "threshold": _detector_threshold(spec["registry_id"]),
+        "score_means": spec["score_means"],
+        "evidence": evidence[:20],
+        "seconds": round(time.monotonic() - t0, 2),
+        # Stated on every response, not in a footnote: a single signal's
+        # threshold is a reference point, not a fraud decision.
+        "note": ("This is one signal's score against its own calibrated operating point. "
+                 "The ALLOW/REVIEW/CHALLENGE/BLOCK decision is made by the fusion layer "
+                 "with the other signals and Customer Universe context, never by one detector."),
+    }
+
+
+@app.post("/detectors/{detector_id}/score")
+async def score_file(
+    detector_id: str,
+    file: UploadFile = File(...),
+    reference: Optional[UploadFile] = File(None),
+):
+    """Scores an uploaded artifact.
+
+    The upload is written to a temp file and deleted in a finally block:
+    every detector's score() takes a path (that is what keeps Principle 13
+    structurally true), and nothing a stranger uploads should outlive the
+    request that scored it.
+    """
+    spec = _SPEC_BY_ID.get(detector_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"No detector '{detector_id}'")
+    if spec["input"] == "text":
+        raise HTTPException(status_code=400,
+                            detail=f"{detector_id} scores text -- POST to /detectors/{detector_id}/score-text")
+
+    available, reason = _detector_available(detector_id)
+    if not available:
+        raise HTTPException(status_code=503, detail=f"{detector_id} unavailable here -- {reason}")
+
+    if spec["input"] == "pair" and reference is None:
+        raise HTTPException(status_code=400,
+                            detail="video_kyc compares a video against a reference photo -- send both "
+                                   "(fields: file, reference)")
+
+    suffix = Path(file.filename or "upload").suffix.lower()
+    if spec["accepts"] and suffix not in spec["accepts"]:
+        raise HTTPException(status_code=400,
+                            detail=f"{detector_id} accepts {', '.join(spec['accepts'])} -- got '{suffix or 'no extension'}'")
+
+    tmp_paths = []
+    t0 = time.monotonic()
+    try:
+        primary = _spool_upload(file, suffix)
+        tmp_paths.append(primary)
+
+        detector = _load_detector(detector_id)
+        evidence = []
+        if spec["input"] == "pair":
+            ref_path = _spool_upload(reference, Path(reference.filename or "ref.jpg").suffix.lower())
+            tmp_paths.append(ref_path)
+            score, evidence = detector.score_with_evidence(primary, ref_path)
+        elif hasattr(detector, "score_with_evidence"):
+            score, evidence = detector.score_with_evidence(primary)
+        else:
+            score = detector.score(primary)
+        score = float(score)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
+    finally:
+        for p in tmp_paths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    return {
+        "detector": detector_id,
+        "filename": file.filename,
+        "score": score,
+        "threshold": _detector_threshold(spec["registry_id"]),
+        "score_means": spec["score_means"],
+        "evidence": [str(e) for e in (evidence or [])][:20],
+        "seconds": round(time.monotonic() - t0, 2),
+        "note": ("This is one signal's score against its own calibrated operating point. "
+                 "The ALLOW/REVIEW/CHALLENGE/BLOCK decision is made by the fusion layer "
+                 "with the other signals and Customer Universe context, never by one detector."),
+    }
+
+
+def _spool_upload(upload: UploadFile, suffix: str) -> str:
+    """Writes an upload to a temp file and returns its path, refusing
+    anything over MAX_UPLOAD_BYTES.
+
+    The cap is enforced while streaming rather than by trusting
+    content-length: a client controls that header, and this endpoint is
+    reachable by anyone with the URL.
+    """
+    MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+    fd, path = tempfile.mkstemp(suffix=suffix or ".bin")
+    written = 0
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = upload.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413,
+                                        detail=f"File larger than {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+                out.write(chunk)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    if written == 0:
+        os.unlink(path)
+        raise HTTPException(status_code=400, detail="Empty file")
+    return path
+
+
 @app.get("/")
 async def root():
     """Service index.
@@ -532,6 +884,10 @@ async def root():
             "generation_status": "GET /generate/status/{run_id}",
             "start_agent_run": "POST /runs/start",
             "agent_run_process_status": "GET /runs/{run_id}/process-status",
+            "stop_agent_run": "POST /runs/{run_id}/stop",
+            "list_detectors": "GET /detectors",
+            "score_upload": "POST /detectors/{detector_id}/score",
+            "score_text": "POST /detectors/{detector_id}/score-text",
             "data_status": "GET /data/status",
             "hydrate_data": "POST /data/hydrate",
         },
