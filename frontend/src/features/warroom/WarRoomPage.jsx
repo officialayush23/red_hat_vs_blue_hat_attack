@@ -104,6 +104,22 @@ export function WarRoomPage() {
   const [evidenceIdx, setEvidenceIdx] = useState(0);
   const current = playable[Math.min(evidenceIdx, Math.max(0, playable.length - 1))];
 
+  // WHAT THE CANVAS IS SHOWING, and why "Detected 24" appeared 12 seconds
+  // into a run whose own tiles all read 0.
+  //
+  // useScoredCases({perFamily: 8}) samples the CORPUS -- 8 rows per family,
+  // 48 dots, scored by earlier runs. That is a reasonable thing to show while
+  // a run is still warming up, and a terrible thing to show unlabelled: the
+  // legend under it counts those 48 dots, so a judge reads "Detected 24" as
+  // this run's result while the counters beside it say 0. Both were correct
+  // and they contradicted each other on screen.
+  //
+  // So: once this run has scored anything, the stream shows THIS RUN's rows.
+  // Until then it shows corpus history and says so in the legend, not in a
+  // caption underneath that nobody reads before the big green number.
+  const streamCases = scoped && runCases?.length ? runCases : cases;
+  const streamIsCorpus = !(scoped && runCases?.length);
+
   const stepCount = steps?.length ?? 0;
   const progressPct = Math.min(100, Math.round((stepCount / TOTAL_STAGES) * 100));
   const currentStep = steps?.find((s) => s.status === "running") ?? steps?.[stepCount - 1];
@@ -130,11 +146,17 @@ export function WarRoomPage() {
     side: "right",
   });
 
+  // Counts the dots ACTUALLY on the canvas. It used to count `cases` (the
+  // corpus sample) unconditionally, so once the stream switched to this
+  // run's rows the legend would have been describing a different population
+  // from the one drawn above it.
   const laneCounts = useMemo(() => {
     const c = { blocked: 0, missed: 0, cleared: 0, false_positive: 0 };
-    for (const row of cases ?? []) c[row.outcome] += 1;
+    for (const row of streamCases ?? []) {
+      if (row.outcome in c) c[row.outcome] += 1;
+    }
     return c;
-  }, [cases]);
+  }, [streamCases]);
 
   // Stopping a run is a real action with a real consequence, so it reports
   // what actually happened rather than optimistically flipping the badge:
@@ -239,19 +261,26 @@ export function WarRoomPage() {
         className="grid flex-1 gap-4 p-4 md:p-6 xl:grid-cols-[minmax(0,1fr)_auto_var(--warroom-rail)] xl:gap-0 xl:gap-y-4"
       >
         <div className="flex min-w-0 flex-col gap-4 xl:pr-4">
-          <AttackStream cases={cases ?? []} live={runningOrWaiting} height={460} />
+          <AttackStream cases={streamCases ?? []} live={runningOrWaiting} height={460} />
 
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <StreamLegend counts={laneCounts} />
+            <div className="flex flex-wrap items-center gap-2">
+              <StreamLegend counts={laneCounts} />
+              {streamIsCorpus && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  corpus history — not this run
+                </span>
+              )}
+            </div>
             {/* The legend counts the dots ON THIS CANVAS -- a recent sample,
                 not the corpus. The counters below are exact counts over every
                 row. Saying so stops the two being read as the same number. */}
             <p className="text-[11px] text-muted-foreground">
               Every dot is a real row from Supabase&apos;s <code className="font-mono">evaluation_results</code> —
               real fused risk score, real decision, real ground truth. Hover any dot for its evidence.
-              {scoped
-                ? " The legend counts this sample; the totals below count only rows scored since this run started."
-                : " The legend counts this sample; the totals below cover the whole corpus."}
+              {streamIsCorpus
+                ? " These dots are a sample of previously scored cases, not this run — this run has not scored anything yet, which is why the counters below read 0. They will switch to this run's own rows as soon as it does."
+                : " These dots are this run's own scored rows; the counters below count the same population exactly."}
               
             </p>
           </div>
