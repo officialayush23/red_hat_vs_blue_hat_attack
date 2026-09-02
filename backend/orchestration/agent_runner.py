@@ -254,19 +254,68 @@ def _banner_reporter(tracker, step, running_detail: str):
     pretending to know how long the stage will take. Every other line is
     ignored, so a chatty detector costs zero extra Supabase writes.
     """
+    # After a FAILED banner both scripts print the child's tail and a HINT.
+    # Those lines are the only place the real cause appears, and they were
+    # being dropped: the orchestrator's own "tail" is the LAST 20 lines of
+    # the whole run, which is always the ===JSON_SUMMARY=== block, never the
+    # error. A run could therefore report "tabular_attacks FAILED (4.9s)"
+    # with no way, anywhere, to find out why.
+    state = {"failed": None, "lines": []}
+
+    def flush_failure():
+        if state["failed"] and state["lines"]:
+            detail = " / ".join(state["lines"])[:600]
+            tracker.push_substep(step, state["failed"], "failed", detail)
+        state["failed"] = None
+        state["lines"] = []
+
     def on_line(line: str):
         text = line.strip()
         if text.startswith("=== ") and text.endswith(" ==="):
+            flush_failure()
             name = text[4:-4].split(" (")[0].strip()
             if name:
                 tracker.push_substep(step, name, "running", running_detail)
         elif text.startswith("--- ") and text.endswith(" ---") and ":" in text:
+            flush_failure()
             name, _, rest = text[4:-4].strip().partition(":")
             rest = rest.strip()
-            tracker.push_substep(step, name.strip(),
-                                 "done" if rest.upper().startswith("OK") else "failed",
-                                 rest)
+            failed = not rest.upper().startswith("OK")
+            tracker.push_substep(step, name.strip(), "failed" if failed else "done", rest)
+            if failed:
+                # Start collecting the tail/HINT lines that follow.
+                state["failed"] = name.strip()
+                state["lines"] = [rest]
+        elif state["failed"] is not None and text:
+            if text.startswith("===================="):
+                flush_failure()
+            elif len(state["lines"]) < 12:
+                state["lines"].append(text)
+
     return on_line
+
+
+def _failed_steps_from(summary) -> list:
+    """Names + hints of the sub-steps that actually failed.
+
+    The orchestrator used to report a failed stage by slicing the last 300
+    characters of the subprocess tail into the step's `result`. Because both
+    scripts print their ===JSON_SUMMARY=== block last, that slice was always
+    a fragment of JSON -- the run record literally said
+    `Evaluation had failures -- "roc_auc": 0.999..., "n_samples": 1386858}}}`
+    which names nothing, explains nothing, and reads as though it succeeded.
+    The structured summary already carries per-step ok/hint; use it.
+    """
+    if not summary or not isinstance(summary.get("results"), list):
+        return []
+    out = []
+    for r in summary["results"]:
+        if isinstance(r, dict) and r.get("ok") is False:
+            label = r.get("name", "?")
+            hint = r.get("hint") or (r.get("tail") or "").strip().splitlines()[-1:] or [""]
+            hint = hint if isinstance(hint, str) else (hint[0] if hint else "")
+            out.append(f"{label}: {hint}" if hint else label)
+    return out
 
 
 def _parse_json_summary(stdout: str):
@@ -647,6 +696,9 @@ def main() -> int:
     os.environ["FRAUDSHIELD_CAMPAIGN_ID"] = run_id
 
     tracker = RunTracker(client, run_id, args.objective, scope, args.severity, args.scenario_count)
+    # Every sub-step that actually failed, collected across stages. A run with
+    # anything in here is NOT "completed" -- see tracker.finish().
+    stage_failures = []
     print(f"Run {run_id} started. Live progress: select * from campaign_runs where campaign_id = '{run_id}'")
 
     try:
@@ -737,6 +789,9 @@ def main() -> int:
             GEN_SCRIPT, ["--only", gen_only, "--n-per-family", str(n_per_family),
                           "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"],
             on_line=_banner_reporter(tracker, gen_step, "generating..."))
+        gen_summary_early = _parse_json_summary(gen_result.get("stdout", ""))
+        gen_failed_steps = _failed_steps_from(gen_summary_early)
+        stage_failures.extend(f"attack-generator/{f}" for f in gen_failed_steps)
         tracker.complete_step(
             gen_step,
             observation="Attack plan approved",
@@ -744,7 +799,8 @@ def main() -> int:
             tool="generate/run_all_generation.py (real subprocess)",
             action=f"generate/run_all_generation.py --only {gen_only} --n-per-family {n_per_family}",
             result=(f"Generation succeeded in {gen_result['seconds']}s" if gen_result["ok"]
-                    else f"Generation had failures ({gen_result['seconds']}s) -- {gen_result['tail'][-300:]}"),
+                    else f"Generation had failures ({gen_result['seconds']}s) -- "
+                         + ("; ".join(gen_failed_steps) or gen_result["tail"][-300:])),
             next_="Send generated cases to the Blue Team",
         )
         # Real on-disk case counts per family, from run_all_generation.py's own
@@ -771,6 +827,8 @@ def main() -> int:
         eval_result = _run_script_streaming(
             EVAL_SCRIPT, ["--only", eval_only, "--json"],
             on_line=_banner_reporter(tracker, bt_step, "scoring..."))
+        eval_failed_steps = _failed_steps_from(_parse_json_summary(eval_result.get("stdout", "")))
+        stage_failures.extend(f"blue-team/{f}" for f in eval_failed_steps)
         tracker.complete_step(
             bt_step,
             observation="New batch of real adversarial cases available",
@@ -778,7 +836,8 @@ def main() -> int:
             tool="evaluation/run_all_evaluations.py (real subprocess)",
             action=f"evaluation/run_all_evaluations.py --only {eval_only}",
             result=(f"Evaluation succeeded in {eval_result['seconds']}s" if eval_result["ok"]
-                    else f"Evaluation had failures ({eval_result['seconds']}s) -- {eval_result['tail'][-300:]}"),
+                    else f"Evaluation had failures ({eval_result['seconds']}s) -- "
+                         + ("; ".join(eval_failed_steps) or eval_result["tail"][-300:])),
             next_="Hand off to Evaluation Agent",
         )
 

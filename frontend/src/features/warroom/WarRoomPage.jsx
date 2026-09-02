@@ -256,6 +256,22 @@ export function WarRoomPage() {
             </p>
           </div>
 
+          {/* Zero scored rows for a run whose stages failed is the TRUE
+              number, and it was the only honest thing on screen for
+              run_1252658138: the eval steps failed, so nothing was persisted
+              under this campaign_id, while the results page happily reported
+              11,120 attacks tested from the scoreboard. Explain the zero
+              instead of leaving it to look like a broken widget. */}
+          {scoped && (stats?.scoredCases ?? 0) === 0 && run?.stageFailures?.length > 0 && (
+            <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+              Nothing was scored under this run: {run.stageFailures.length} stage
+              {run.stageFailures.length === 1 ? "" : "s"} failed, so no rows reached
+              <code className="mx-1 font-mono">evaluation_results</code>. These zeros are real —
+              the run measured nothing. Figures elsewhere for this run come from the model scoreboard,
+              which also holds earlier runs&apos; results.
+            </p>
+          )}
+
           {/* Corpus-wide real counters */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {/* "Detected", not "blocked". `detected` is correctness at each

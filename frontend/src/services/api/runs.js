@@ -63,6 +63,11 @@ function mapCampaignRun(row) {
     detectionRateAfter: meta.detectionRateAfter ?? 0,
     improvementPct: meta.improvementPct ?? 0,
     attackCoveragePct: meta.attackCoveragePct ?? 0,
+    // Sub-steps that actually failed during this run (agent_runner.py's
+    // stage_failures). Non-empty means the numbers below may have come from
+    // metrics.json entries written by EARLIER runs -- the orchestrator reads
+    // the scoreboard, not only this run's output, and cannot tell them apart.
+    stageFailures: meta.stageFailures ?? [],
     weaknesses: meta.weaknesses ?? [],
     mutationIterations: meta.mutationIterations ?? [],
   };

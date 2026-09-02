@@ -56,6 +56,18 @@ const RUN_STATUS_STYLE = {
     label: "Completed",
     className: "bg-secondary text-secondary-foreground"
   },
+  // A run whose stages failed reported itself "Completed" and rendered a
+  // clean 100% -- agent_runner.py now distinguishes the two. It is amber,
+  // not grey: the numbers on such a run may come from earlier runs'
+  // metrics.json entries rather than from this one.
+  completed_with_failures: {
+    label: "Completed with failures",
+    className: "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+  },
+  stopped: {
+    label: "Stopped",
+    className: "bg-muted text-muted-foreground"
+  },
   failed: {
     label: "Failed",
     className: "bg-destructive/15 text-destructive"
