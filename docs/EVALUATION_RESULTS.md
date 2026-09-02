@@ -949,3 +949,43 @@ n_bonafide=200 (self-generated, negative control -- see script docstring). 'over
 - synthetic_identity recall: 1.0000 (n_fraud_rows=3000)
 - mule_network recall: 1.0000 (n_fraud_rows=3487)
 - Caveat: legit comparison rows are the Stage-5 train_val_split's validation portion (seen by XGBoost/LightGBM's early stopping, never in a gradient update) -- see this script's module docstring for the full caveat.
+
+## document_consistency_detector (rapidocr + QR cross-check) -- n=680, supersedes the paddlevl n=120 run
+
+- OCR backend: rapidocr (PP-OCR ONNX via onnxruntime-gpu), Colab T4
+- Decision threshold: 0.25 (calibrated via best_f1_threshold, applied unchanged)
+- Precision: 0.9375
+- Recall: 1.0000
+- F1: 0.9677
+- ROC-AUC: 0.9327
+- PR-AUC: 0.9635
+- False positive rate: 0.1600 (32 of 200 bonafide invoices)
+- n=680 (480 fraud + 200 bonafide); TP=480 FP=32 TN=168 FN=0
+- Per split: train recall 1.0000 (n_fraud=240), FPR 0.1910 (n_bonafide=89);
+  held_out recall 1.0000 (n_fraud=240), FPR 0.1351 (n_bonafide=111)
+
+Comparison against the superseded incumbent, same detector, same QR logic, different OCR:
+
+| entry | recall | precision | FPR | n |
+|---|---|---|---|---|
+| rapidocr (this run) | 1.0000 | 0.9375 | 0.1600 | 680 |
+| paddlevl (superseded) | 0.9125 | 0.8795 | 0.2500 | 120 |
+
+NOT written by the eval script, and that is the point of this section. The
+2026-09-01 Colab run scored all 680 cases and persisted one row per case to
+Supabase `evaluation_results`, but its `metrics.json` never reached the repo --
+only the notebook's A3 cell printed the result as prose. So `metrics.json`, the
+`model_registry` table and the site's Model Performance page all kept reporting
+the superseded paddlevl n=120 numbers, including a 25.0% false-positive rate
+that a measured 16.0% had already replaced.
+
+Every figure above is recomputed from those persisted per-case rows (run_id
+`0ee2574a-1136-48e8-a45c-ea00f649d6db` = train,
+`b605a39b-4c31-4096-8df8-4623a8e8d398` = held_out), which carry the real score
+and ground truth for each case -- not retyped from the prose. The
+recomputation reproduces A3's printed claims exactly, which is the only reason
+they are trusted here. The score is quantized to {0, .25, .5, .75, 1.0} by
+construction (mismatched-over-comparable across four fields), so ROC-AUC and
+PR-AUC are computed over those five levels with ties counted at 0.5.
+
+16% is still high for production. Reported as measured, not as solved.

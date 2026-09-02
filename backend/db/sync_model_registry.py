@@ -59,8 +59,13 @@ MODEL_META = {
         "artifact_path": None,  # pretrained, no local weights committed
     },
     "document_consistency_detector": {
-        "purpose": "Pretrained inference -- PaddleOCR-VL extracts printed invoice fields, cross-checked against "
-                   "the invoice's own QR-encoded payload for tampering (defend/pretrained/document_consistency_detector.py)",
+        # 2026-09-02: was "PaddleOCR-VL". The measured winner is rapidocr
+        # (recall 1.0000 / FPR 0.1600 on n=680, vs paddlevl's 0.9125 / 0.2500
+        # on n=120), and this string is what the Model Performance page labels
+        # the model with -- so it named the losing engine on every card.
+        "purpose": "Pretrained inference -- rapidocr (PP-OCR ONNX) extracts printed invoice fields, cross-checked "
+                   "against the invoice's own QR-encoded payload for tampering "
+                   "(defend/pretrained/document_consistency_detector.py)",
         "dataset": "Bonafide: self-generated fully-consistent invoices. Fraud: our own tampered document_fraud "
                    "cases (generate/generate_document_attacks.py) -- Principle 11 evidence-gate run",
         "signal_category": "document",

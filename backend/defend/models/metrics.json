@@ -85,6 +85,30 @@
   "document_consistency_detector": {
     "metrics": {
       "threshold": 0.25,
+      "precision": 0.9375,
+      "recall": 1.0,
+      "f1": 0.967741935483871,
+      "roc_auc": 0.9326666666666666,
+      "pr_auc": 0.9634619094254511,
+      "false_positive_rate": 0.16,
+      "n_samples": 680,
+      "n_positive": 480,
+      "true_positives": 480,
+      "false_positives": 32,
+      "true_negatives": 168,
+      "false_negatives": 0
+    },
+    "decision_threshold": 0.25,
+    "n_bonafide": 200,
+    "n_fraud": 480,
+    "held_out_recall": 1.0,
+    "train_recall": 1.0,
+    "ocr_backend": "rapidocr",
+    "note": "rapidocr (PP-OCR ONNX via onnxruntime-gpu) + our own QR cross-check, no training -- Principle 11 evidence-gate run on Colab T4, n=680 (480 fraud + 200 bonafide). SUPERSEDES the paddlevl n=120 measurement, kept at document_consistency_detector_paddlevl_n120_superseded. PROVENANCE, because this entry was NOT written by the eval script: the 2026-09-01 Colab run scored all 680 cases and persisted one row per case to Supabase evaluation_results, but its metrics.json never reached the repo -- only the A3 cell's printed prose did, so the site kept showing the superseded n=120 paddlevl numbers. Rather than retype that prose, every field here is recomputed from those persisted rows (run_id 0ee2574a-1136-48e8-a45c-ea00f649d6db = train, b605a39b-4c31-4096-8df8-4623a8e8d398 = held_out), which carry the real per-case score and ground truth. The recomputation reproduces A3's printed claims exactly (recall 1.0000, precision 0.9375, FPR 0.1600, 32 false positives), which is why they are trusted. Score is quantized to {0, .25, .5, .75, 1.0} by construction (mismatched-over-comparable across four fields), so roc_auc/pr_auc are computed over those five levels with ties handled at 0.5. Per split: train recall 1.0000 on n=240 fraud, FPR 0.1910 on n=89 bonafide; held_out recall 1.0000 on n=240 fraud, FPR 0.1351 on n=111 bonafide. 16% FPR is still high for production -- reported as measured, not as solved."
+  },
+  "document_consistency_detector_paddlevl_n120_superseded": {
+    "metrics": {
+      "threshold": 0.25,
       "precision": 0.8795180722891566,
       "recall": 0.9125,
       "f1": 0.8957055214723927,
@@ -103,7 +127,7 @@
     "n_fraud": 80,
     "held_out_recall": 1.0,
     "train_recall": 0.825,
-    "note": "pretrained OCR-VL + our own QR cross-check logic, no training -- evidence-gate run per Principle 11. Run on Google Colab (T4 GPU), not locally -- paddlepaddle-gpu proved unstable across four distinct low-level Windows driver/library errors in a row (DLL collision, cudnn version mismatch, opencv package collision, cudnn execution failure); see docs/FUTURE_INTEGRATIONS.md item 2. Detector and metrics code run unmodified from the repo. Threshold calibrated via best_f1_threshold on bonafide + train-split fraud only (round 2), then applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default, which is why round 1 showed recall=0.7125 vs round 2's 0.9125 at the same false_positive_rate (0.25 both rounds -- the same 10/40 bonafide docs were misflagged either way; the quantized field-mismatch score never put a bonafide doc exactly between 0.25 and 0.5)."
+    "note": "SUPERSEDED by the rapidocr n=680 run -- kept for the record, not for reporting. pretrained OCR-VL + our own QR cross-check logic, no training -- evidence-gate run per Principle 11. Run on Google Colab (T4 GPU), not locally -- paddlepaddle-gpu proved unstable across four distinct low-level Windows driver/library errors in a row (DLL collision, cudnn version mismatch, opencv package collision, cudnn execution failure); see docs/FUTURE_INTEGRATIONS.md item 2. Detector and metrics code run unmodified from the repo. Threshold calibrated via best_f1_threshold on bonafide + train-split fraud only (round 2), then applied unchanged to held_out -- round 1 used an uncalibrated 0.5 default, which is why round 1 showed recall=0.7125 vs round 2's 0.9125 at the same false_positive_rate (0.25 both rounds -- the same 10/40 bonafide docs were misflagged either way; the quantized field-mismatch score never put a bonafide doc exactly between 0.25 and 0.5)."
   },
   "phishing_classifier": {
     "metrics": {
