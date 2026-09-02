@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { getCorpusStats, listScoredCases, listScoredCasesByFamily } from "@/services/api/liveCases";
+import { getCorpusStats, getRunStats, listScoredCases, listScoredCasesByFamily } from "@/services/api/liveCases";
 
 // Real scored cases for the war-room animation. Polls while a run is in
 // flight so newly scored cases stream in as the backend writes them.
@@ -28,5 +28,17 @@ export function useCorpusStats(live = false) {
     queryFn: getCorpusStats,
     refetchInterval: live ? 10_000 : false,
     staleTime: live ? 0 : 60_000,
+  });
+}
+
+// Counters for ONE run, polled while it is live. Separate from useCorpusStats
+// because the war room needs both: what this run has done, and what the whole
+// corpus says.
+export function useRunStats(sinceIso, live = false) {
+  return useQuery({
+    queryKey: ["run-stats", sinceIso],
+    queryFn: () => getRunStats(sinceIso),
+    enabled: Boolean(sinceIso),
+    refetchInterval: live ? 4000 : false,
   });
 }

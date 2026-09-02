@@ -128,8 +128,19 @@ def main() -> None:
     metrics = json.loads(METRICS_PATH.read_text())
     client = get_service_client()
 
+    # Historical entries are kept in metrics.json ON PURPOSE (the superseded
+    # paddlevl measurement is what the OCR bake-off was decided against), but
+    # they are not models the registry should advertise. Syncing them created a
+    # document_consistency_detector_paddlevl_n120_superseded row with a null
+    # purpose and null signal_category, which the Model Performance page then
+    # rendered as a real, broken-looking model card next to the live one.
+    SKIP_SUFFIXES = ("_superseded", "_reported", "_reverify")
+
     rows = []
     for model_id, entry in metrics.items():
+        if model_id.endswith(SKIP_SUFFIXES):
+            print(f"  skipping historical entry: {model_id}")
+            continue
         meta = MODEL_META.get(model_id, {})
         rows.append({
             "id": model_id,

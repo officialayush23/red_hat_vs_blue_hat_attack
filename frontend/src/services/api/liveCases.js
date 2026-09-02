@@ -188,6 +188,57 @@ export async function listScoredCasesByFamily(perFamily = 8) {
 // Real aggregate counters over the scored corpus -- computed by asking
 // Postgres for exact counts (head:true, count:"exact"), never by counting
 // a page of rows in the browser and extrapolating.
+// Same counters, scoped to ONE run.
+//
+// 2026-09-02: the war room's tiles showed corpus-wide totals on a live run
+// page -- 27,576 detected over 30,102 scored -- so a run adding a few hundred
+// rows moved them by a fraction of a percent and they read as frozen. "Live"
+// has to mean live for everything on the screen, or it means nothing.
+//
+// Scoped by TIME, not by run id, because no link exists: evaluation_results
+// .run_id points at evaluation_runs, whose config carries {model, n_cases}
+// and no campaign id, so a defense run cannot be joined to the eval rows it
+// produced. Rows written since the run started ARE that run's rows as long as
+// one run is in flight -- which is the case here, and the sub-line says so
+// rather than pretending to a precision this cannot have. Threading the
+// campaign id through supabase_results.py is the real fix; this is the honest
+// version that needs no backend deploy.
+export async function getRunStats(sinceIso) {
+  if (!sinceIso) return null;
+  const countOf = async (build) => {
+    const { count, error } = await build();
+    if (error) throw error;
+    return count ?? 0;
+  };
+  const base = () =>
+    supabase
+      .from("evaluation_results")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", sinceIso);
+  const [total, fraudDetected, fraudMissed, fraudBlockedOutright, legitCleared, legitFlagged] =
+    await Promise.all([
+      countOf(() => base()),
+      countOf(() => base().eq("actual_label", "fraud").eq("detected", true)),
+      countOf(() => base().eq("actual_label", "fraud").eq("detected", false)),
+      countOf(() => base().eq("actual_label", "fraud").eq("decision", "block")),
+      countOf(() => base().eq("actual_label", "legit").eq("detected", true)),
+      countOf(() => base().eq("actual_label", "legit").eq("detected", false)),
+    ]);
+  const fraudTotal = fraudDetected + fraudMissed;
+  const legitTotal = legitCleared + legitFlagged;
+  return {
+    scoredCases: total,
+    fraudDetected,
+    fraudBlockedOutright,
+    fraudMissed,
+    legitCleared,
+    falsePositives: legitFlagged,
+    detectionPct: fraudTotal ? (fraudDetected / fraudTotal) * 100 : 0,
+    blockedPct: fraudTotal ? (fraudBlockedOutright / fraudTotal) * 100 : 0,
+    falsePositivePct: legitTotal ? (legitFlagged / legitTotal) * 100 : 0,
+  };
+}
+
 export async function getCorpusStats() {
   const countOf = async (build) => {
     const { count, error } = await build();

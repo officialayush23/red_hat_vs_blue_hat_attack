@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { useRun } from "@/hooks/useRuns";
 import { useAgentSteps } from "@/hooks/useAgentActivity";
 import { useApiMode } from "@/hooks/useApiMode";
-import { useCorpusStats, useRecentScoredCases, useScoredCases } from "@/hooks/useLiveCases";
+import { useCorpusStats, useRecentScoredCases, useRunStats, useScoredCases } from "@/hooks/useLiveCases";
 import { OUTCOME_META } from "@/services/api/liveCases";
 
 // agent_runner.py reports 8 steps: the 7 planned stages plus the
@@ -77,7 +77,14 @@ export function WarRoomPage() {
 
   const { data: cases } = useScoredCases({ perFamily: 8, live: runningOrWaiting });
   const { data: recent } = useRecentScoredCases(24, runningOrWaiting);
-  const { data: stats } = useCorpusStats(runningOrWaiting);
+  const { data: corpus } = useCorpusStats(runningOrWaiting);
+  // This run's own counters. The corpus totals stay available as context, but
+  // the headline numbers on a run page must be about THAT run -- otherwise a
+  // few hundred new rows land inside 30,000 and the tiles look frozen while
+  // the run is visibly working.
+  const { data: runStats } = useRunStats(run?.createdAt, runningOrWaiting);
+  const stats = runStats ?? corpus;
+  const scoped = Boolean(runStats);
 
   const stepCount = steps?.length ?? 0;
   const progressPct = Math.min(100, Math.round((stepCount / TOTAL_STAGES) * 100));
@@ -224,7 +231,10 @@ export function WarRoomPage() {
             <p className="text-[11px] text-muted-foreground">
               Every dot is a real row from Supabase&apos;s <code className="font-mono">evaluation_results</code> —
               real fused risk score, real decision, real ground truth. Hover any dot for its evidence.
-              The legend counts this sample; the totals below cover the whole corpus.
+              {scoped
+                ? " The legend counts this sample; the totals below count only rows scored since this run started."
+                : " The legend counts this sample; the totals below cover the whole corpus."}
+              
             </p>
           </div>
 
@@ -237,24 +247,24 @@ export function WarRoomPage() {
                 is stated separately rather than the detection rate being shown
                 under the word "blocked". */}
             <Counter
-              label="Attacks detected"
+              label={scoped ? "Attacks detected · this run" : "Attacks detected"}
               value={(stats?.fraudDetected ?? 0).toLocaleString()}
               tone="text-emerald-600 dark:text-emerald-400"
               sub={
                 stats
-                  ? `${stats.detectionPct.toFixed(1)}% of scored fraud results — ` +
+                  ? `${stats.detectionPct.toFixed(1)}% of scored fraud — ` +
                     `${stats.fraudBlockedOutright.toLocaleString()} blocked outright (${stats.blockedPct.toFixed(1)}%)`
                   : undefined
               }
             />
             <Counter
-              label="Attacks missed"
+              label={scoped ? "Attacks missed · this run" : "Attacks missed"}
               value={(stats?.fraudMissed ?? 0).toLocaleString()}
               tone="text-red-600 dark:text-red-400"
               sub="reached the system"
             />
             <Counter
-              label="False positives"
+              label={scoped ? "False positives · this run" : "False positives"}
               value={(stats?.falsePositives ?? 0).toLocaleString()}
               tone="text-amber-600 dark:text-amber-400"
               sub={stats ? `${stats.falsePositivePct.toFixed(1)}% of scored legitimate samples` : undefined}
@@ -265,10 +275,19 @@ export function WarRoomPage() {
                 case count would inflate the corpus by ~2x. The distinct
                 case count is the sub-line, from attack_cases. */}
             <Counter
-              label="Scored results"
+              label={scoped ? "Scored results · this run" : "Scored results"}
               value={(stats?.scoredCases ?? 0).toLocaleString()}
               tone="text-foreground"
-              sub={stats ? `over ${stats.attackCases.toLocaleString()} generated attack cases` : undefined}
+              sub={
+                scoped
+                  ? corpus
+                    ? `${corpus.scoredCases.toLocaleString()} in the corpus, over ` +
+                      `${corpus.attackCases.toLocaleString()} generated cases`
+                    : "this run only"
+                  : stats
+                    ? `over ${stats.attackCases.toLocaleString()} generated attack cases`
+                    : undefined
+              }
             />
           </div>
 
