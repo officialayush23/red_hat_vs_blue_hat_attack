@@ -23,7 +23,8 @@ import { cn } from "@/lib/utils";
 import { useRun } from "@/hooks/useRuns";
 import { useAgentSteps } from "@/hooks/useAgentActivity";
 import { useApiMode } from "@/hooks/useApiMode";
-import { useCorpusStats, useRecentScoredCases, useRunStats, useScoredCases } from "@/hooks/useLiveCases";
+import { useCorpusStats, useRecentScoredCases, useRunCases, useRunStats, useScoredCases } from "@/hooks/useLiveCases";
+import { CaseEvidence } from "@/components/shared/CaseEvidence";
 import { OUTCOME_META } from "@/services/api/liveCases";
 
 // agent_runner.py reports 8 steps: the 7 planned stages plus the
@@ -82,9 +83,26 @@ export function WarRoomPage() {
   // the headline numbers on a run page must be about THAT run -- otherwise a
   // few hundred new rows land inside 30,000 and the tiles look frozen while
   // the run is visibly working.
-  const { data: runStats } = useRunStats(run?.createdAt, runningOrWaiting);
+  const { data: runStats } = useRunStats(run?.createdAt, runId, runningOrWaiting);
   const stats = runStats ?? corpus;
   const scoped = Boolean(runStats);
+
+  // The artifacts THIS run fed the detectors. CaseEvidence already plays the
+  // audio, shows the tampered invoice, plays the KYC video and renders the
+  // phishing message -- it was wired into exactly one page (Customer
+  // Universe), so a judge watching a run could read that the system detects
+  // tampered invoices and never see one. Media only: a transaction row is
+  // real evidence but not something you look at.
+  const { data: runCases } = useRunCases(runId, 60, runningOrWaiting);
+  const playable = useMemo(
+    () => (runCases ?? []).filter((c) => {
+      const a = c.artifacts ?? {};
+      return a.audio_url || a.image_url || a.video_url;
+    }),
+    [runCases],
+  );
+  const [evidenceIdx, setEvidenceIdx] = useState(0);
+  const current = playable[Math.min(evidenceIdx, Math.max(0, playable.length - 1))];
 
   const stepCount = steps?.length ?? 0;
   const progressPct = Math.min(100, Math.round((stepCount / TOTAL_STAGES) * 100));
@@ -290,6 +308,51 @@ export function WarRoomPage() {
               }
             />
           </div>
+
+          {/* The real artifacts this run scored -- playable. */}
+          {playable.length > 0 && (
+            <div className="rounded-2xl border">
+              <div className="flex items-center gap-2 border-b px-3 py-2">
+                <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  Evidence from this run — {playable.length} artifact{playable.length === 1 ? "" : "s"}
+                </p>
+                <div className="ml-auto flex items-center gap-1">
+                  <Button
+                    size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                    disabled={evidenceIdx <= 0}
+                    onClick={() => setEvidenceIdx((i) => Math.max(0, i - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
+                    {Math.min(evidenceIdx + 1, playable.length)}/{playable.length}
+                  </span>
+                  <Button
+                    size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                    disabled={evidenceIdx >= playable.length - 1}
+                    onClick={() => setEvidenceIdx((i) => Math.min(playable.length - 1, i + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+              <div className="p-3">
+                {current && (
+                  <CaseEvidence
+                    evidence={{
+                      caseId: current.caseId,
+                      family: current.family,
+                      artifacts: current.artifacts,
+                      mutationParams: current.mutationParams,
+                      transactionSequence: current.transactionSequence,
+                      splitPortion: current.splitPortion,
+                      isFraud: current.actualLabel === "fraud",
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Live ticker of the most recently scored real cases */}
           <div className="rounded-2xl border">

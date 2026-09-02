@@ -42,6 +42,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -494,6 +495,13 @@ def main() -> int:
 
     run_id = args.run_id or f"run_{uuid.uuid4().hex[:10]}"
     client = get_service_client()
+    # Every subprocess this run spawns -- generators, evaluators, and the
+    # eval_*.py scripts THEY spawn -- inherits this, which is how
+    # supabase_results.py stamps evaluation_runs.config.campaign_id and makes
+    # a defense run joinable to the rows it produced. Set before the tracker,
+    # so nothing can be spawned without it.
+    os.environ["FRAUDSHIELD_CAMPAIGN_ID"] = run_id
+
     tracker = RunTracker(client, run_id, args.objective, scope, args.severity, args.scenario_count)
     print(f"Run {run_id} started. Live progress: select * from campaign_runs where campaign_id = '{run_id}'")
 

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { getCorpusStats, getRunStats, listScoredCases, listScoredCasesByFamily } from "@/services/api/liveCases";
+import { getCorpusStats, getRunStats, listRunCases, listScoredCases, listScoredCasesByFamily } from "@/services/api/liveCases";
 
 // Real scored cases for the war-room animation. Polls while a run is in
 // flight so newly scored cases stream in as the backend writes them.
@@ -34,11 +34,22 @@ export function useCorpusStats(live = false) {
 // Counters for ONE run, polled while it is live. Separate from useCorpusStats
 // because the war room needs both: what this run has done, and what the whole
 // corpus says.
-export function useRunStats(sinceIso, live = false) {
+export function useRunStats(sinceIso, campaignId, live = false) {
   return useQuery({
-    queryKey: ["run-stats", sinceIso],
-    queryFn: () => getRunStats(sinceIso),
-    enabled: Boolean(sinceIso),
+    queryKey: ["run-stats", sinceIso, campaignId],
+    queryFn: () => getRunStats(sinceIso, campaignId),
+    enabled: Boolean(sinceIso || campaignId),
     refetchInterval: live ? 4000 : false,
+  });
+}
+
+// The artifacts THIS run fed the detectors -- what a judge asks to see and
+// play. Empty for runs written before evaluation_runs carried a campaign_id.
+export function useRunCases(campaignId, limit = 60, live = false) {
+  return useQuery({
+    queryKey: ["run-cases", campaignId, limit],
+    queryFn: () => listRunCases(campaignId, limit),
+    enabled: Boolean(campaignId),
+    refetchInterval: live ? 5000 : false,
   });
 }

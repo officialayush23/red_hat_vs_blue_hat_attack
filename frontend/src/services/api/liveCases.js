@@ -120,6 +120,13 @@ function mapRow(result, caseRow) {
     })),
     splitPortion: caseRow?.split_portion ?? null,
     sourceDataset: caseRow?.source_dataset ?? null,
+    // The ARTIFACT itself, not a description of it. Left off until
+    // 2026-09-02, which meant anything filtering these rows for playable
+    // media matched nothing and failed silently -- the panel simply never
+    // rendered. CaseEvidence reads exactly these three.
+    artifacts: caseRow?.artifacts ?? null,
+    mutationParams: caseRow?.mutation_params ?? null,
+    transactionSequence: caseRow?.transaction_sequence ?? null,
     createdAt: result.created_at,
   };
   row.outcome = outcomeOf(row);
@@ -203,18 +210,58 @@ export async function listScoredCasesByFamily(perFamily = 8) {
 // rather than pretending to a precision this cannot have. Threading the
 // campaign id through supabase_results.py is the real fix; this is the honest
 // version that needs no backend deploy.
-export async function getRunStats(sinceIso) {
-  if (!sinceIso) return null;
+// The eval runs a defense run produced. Empty for runs that predate
+// FRAUDSHIELD_CAMPAIGN_ID (2026-09-02), which is why every caller falls back
+// to the time window rather than showing a confident zero.
+export async function getEvalRunIds(campaignId) {
+  if (!campaignId) return [];
+  const { data, error } = await supabase
+    .from("evaluation_runs")
+    .select("id")
+    .eq("config->>campaign_id", campaignId);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.id);
+}
+
+// Real per-case rows for ONE defense run -- the artifacts it actually fed the
+// detectors, joined to their cases so the evidence viewer can play them.
+export async function listRunCases(campaignId, limit = 60) {
+  const runIds = await getEvalRunIds(campaignId);
+  if (!runIds.length) return [];
+  const { data: results, error } = await supabase
+    .from("evaluation_results")
+    .select("id,run_id,case_id,model_signals,fused_risk_score,decision,detected,actual_label,evidence,created_at")
+    .in("run_id", runIds)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  const ids = [...new Set((results ?? []).map((r) => r.case_id))];
+  if (!ids.length) return [];
+  const { data: cases, error: cErr } = await supabase
+    .from("attack_cases")
+    .select("id,attack_family,mutation_params,split_portion,is_fraud,artifacts,transaction_sequence,customer_id")
+    .in("id", ids);
+  if (cErr) throw cErr;
+  const byId = Object.fromEntries((cases ?? []).map((c) => [c.id, c]));
+  return (results ?? []).map((r) => mapRow(r, byId[r.case_id]));
+}
+
+export async function getRunStats(sinceIso, campaignId) {
+  if (!sinceIso && !campaignId) return null;
+  // Prefer the real join. The time window is the fallback for runs written
+  // before evaluation_runs.config carried a campaign_id -- correct only while
+  // one run is in flight, which is why it is not the first choice any more.
+  const runIds = await getEvalRunIds(campaignId);
+  const scopedBy = runIds.length ? "campaign" : "time";
   const countOf = async (build) => {
     const { count, error } = await build();
     if (error) throw error;
     return count ?? 0;
   };
-  const base = () =>
-    supabase
-      .from("evaluation_results")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", sinceIso);
+  const base = () => {
+    const q = supabase.from("evaluation_results").select("id", { count: "exact", head: true });
+    return runIds.length ? q.in("run_id", runIds) : q.gte("created_at", sinceIso);
+  };
   const [total, fraudDetected, fraudMissed, fraudBlockedOutright, legitCleared, legitFlagged] =
     await Promise.all([
       countOf(() => base()),
@@ -227,6 +274,7 @@ export async function getRunStats(sinceIso) {
   const fraudTotal = fraudDetected + fraudMissed;
   const legitTotal = legitCleared + legitFlagged;
   return {
+    scopedBy,
     scoredCases: total,
     fraudDetected,
     fraudBlockedOutright,

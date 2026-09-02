@@ -162,9 +162,21 @@ def record_run_and_results(
     _assert_cases_exist(client, [r["case_id"] for r in rows], model_name)
 
     now = datetime.now(timezone.utc).isoformat()
+    # WHICH DEFENSE RUN PRODUCED THIS. Until 2026-09-02 nothing recorded it:
+    # config held {model, n_cases} and no campaign id, so a defense run could
+    # not be joined to the eval rows it produced. Every per-run number in the
+    # UI therefore had to be either corpus-wide (tiles that never moved) or
+    # inferred from a time window (right only while exactly one run is in
+    # flight). agent_runner.py exports FRAUDSHIELD_CAMPAIGN_ID before it
+    # spawns anything, so every child inherits it; absent when a script is run
+    # by hand, which is a real distinction worth keeping rather than faking.
+    campaign_id = os.environ.get("FRAUDSHIELD_CAMPAIGN_ID") or None
+    config = {"model": model_name, "n_cases": len(cases)}
+    if campaign_id:
+        config["campaign_id"] = campaign_id
     run_resp = client.table("evaluation_runs").insert({
         "run_type": run_type,
-        "config": {"model": model_name, "n_cases": len(cases)},
+        "config": config,
         "status": "running",
         "started_at": now,
     }).execute()
