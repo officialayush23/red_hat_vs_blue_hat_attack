@@ -13,6 +13,30 @@ export function useRuns() {
   });
 }
 
+// THE RUN A JUDGE SHOULD BE LOOKING AT.
+//
+// Not runs[0]. The newest run is frequently one that was stopped or that
+// failed before the evaluation stage, and every page keyed to it renders
+// empty -- the sidebar's whole Blue Team and Results sections pointed at
+// exactly such a run, so "Evaluation", "Weakness Analysis" and "Run
+// Results" all opened blank. attacksTested > 0 is required as well as
+// hasEvaluation: run_be7536b10d completed with attacksTested 0 and
+// detectionRateAfter 100.0, and "100% over nothing" is its own kind of
+// misleading.
+//
+// Returns { run, isStale, hasAny }: isStale says the newest run is NOT
+// this one, so a page can say which run it is showing and why.
+export function useLatestEvaluatedRun() {
+  const { data: runs, isLoading } = useRuns();
+  const run = runs?.find((r) => r.hasEvaluation && r.attacksTested > 0);
+  return {
+    run,
+    isLoading,
+    hasAny: Boolean(runs?.length),
+    isStale: Boolean(run && runs?.[0] && runs[0].id !== run.id),
+  };
+}
+
 export function useRun(id) {
   return useQuery({
     queryKey: ["runs", id],

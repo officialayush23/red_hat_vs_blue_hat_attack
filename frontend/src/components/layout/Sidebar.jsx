@@ -1,12 +1,24 @@
 import { ActivityIcon, FileTextIcon, GaugeIcon, LayoutDashboardIcon, ListChecksIcon, Network, PlusCircleIcon, RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
-import { useRuns } from "@/hooks/useRuns";
+import { useLatestEvaluatedRun } from "@/hooks/useRuns";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar as SidebarPrimitive, SidebarGroup, SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
 
 export function Sidebar() {
-  const { data: runs } = useRuns();
   const { collapsed } = useSidebar();
-  const latestId = runs?.[0]?.id ?? "DR-024";
+  // Every Blue Team / Results link below is keyed to a run id. It used to
+  // be runs[0] -- the NEWEST run -- which is routinely one that was
+  // stopped before the evaluation stage, so "Evaluation", "Weakness
+  // Analysis", "Adaptive Mutation", "Run Results" and "Reports" all
+  // opened empty for a first-time visitor. Point them at the newest run
+  // that actually produced results instead.
+  //
+  // The old fallback was the literal string "DR-024" -- a leftover mock id
+  // that resolves to no row, so with an empty database every one of these
+  // links led to a not-found page. When there is genuinely no evaluated
+  // run, send people to the runs list, which can explain itself.
+  const { run: latestRun } = useLatestEvaluatedRun();
+  const latestId = latestRun?.id;
+  const runLink = (suffix) => (latestId ? `/runs/${latestId}/${suffix}` : "/runs");
 
   return (
     <SidebarPrimitive
@@ -49,7 +61,7 @@ export function Sidebar() {
         </SidebarGroup>
 
         <SidebarGroup title="Red Team">
-          <SidebarMenuButton to={`/runs/${latestId}/activity`} icon={ActivityIcon}>
+          <SidebarMenuButton to={runLink("activity")} icon={ActivityIcon}>
             Agent Console
           </SidebarMenuButton>
           <SidebarMenuButton to="/attacks" icon={ShieldAlertIcon}>
@@ -61,25 +73,25 @@ export function Sidebar() {
         </SidebarGroup>
 
         <SidebarGroup title="Blue Team">
-          <SidebarMenuButton to={`/runs/${latestId}/evaluation`} icon={ShieldCheckIcon}>
+          <SidebarMenuButton to={runLink("evaluation")} icon={ShieldCheckIcon}>
             Evaluation
           </SidebarMenuButton>
-          <SidebarMenuButton to={`/runs/${latestId}/weaknesses`} icon={TriangleAlertIcon}>
+          <SidebarMenuButton to={runLink("weaknesses")} icon={TriangleAlertIcon}>
             Weakness Analysis
           </SidebarMenuButton>
-          <SidebarMenuButton to={`/runs/${latestId}/mutation`} icon={RefreshCwIcon}>
+          <SidebarMenuButton to={runLink("mutation")} icon={RefreshCwIcon}>
             Adaptive Mutation
           </SidebarMenuButton>
         </SidebarGroup>
 
         <SidebarGroup title="Results">
-          <SidebarMenuButton to={`/runs/${latestId}/results`} icon={GaugeIcon}>
+          <SidebarMenuButton to={runLink("results")} icon={GaugeIcon}>
             Run Results
           </SidebarMenuButton>
           <SidebarMenuButton to="/performance" icon={GaugeIcon}>
             Model Performance
           </SidebarMenuButton>
-          <SidebarMenuButton to={`/runs/${latestId}/report`} icon={FileTextIcon}>
+          <SidebarMenuButton to={runLink("report")} icon={FileTextIcon}>
             Reports / Export
           </SidebarMenuButton>
           <SidebarMenuButton to="/architecture" icon={Network}>
