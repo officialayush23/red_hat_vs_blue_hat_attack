@@ -167,19 +167,34 @@ export function WarRoomPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <StreamLegend counts={laneCounts} />
+            {/* The legend counts the dots ON THIS CANVAS -- a recent sample,
+                not the corpus. The counters below are exact counts over every
+                row. Saying so stops the two being read as the same number. */}
             <p className="text-[11px] text-muted-foreground">
               Every dot is a real row from Supabase&apos;s <code className="font-mono">evaluation_results</code> —
               real fused risk score, real decision, real ground truth. Hover any dot for its evidence.
+              The legend counts this sample; the totals below cover the whole corpus.
             </p>
           </div>
 
           {/* Corpus-wide real counters */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {/* "Detected", not "blocked". `detected` is correctness at each
+                detector's own calibrated threshold; `decision` is the 0-100
+                band fusion.py assigns. They diverge -- thousands of fraud rows
+                are detected=true with decision='approve' -- so the block rate
+                is stated separately rather than the detection rate being shown
+                under the word "blocked". */}
             <Counter
-              label="Attacks blocked"
-              value={(stats?.fraudBlocked ?? 0).toLocaleString()}
+              label="Attacks detected"
+              value={(stats?.fraudDetected ?? 0).toLocaleString()}
               tone="text-emerald-600 dark:text-emerald-400"
-              sub={stats ? `${stats.recallPct.toFixed(1)}% of scored fraud results` : undefined}
+              sub={
+                stats
+                  ? `${stats.detectionPct.toFixed(1)}% of scored fraud results — ` +
+                    `${stats.fraudBlockedOutright.toLocaleString()} blocked outright (${stats.blockedPct.toFixed(1)}%)`
+                  : undefined
+              }
             />
             <Counter
               label="Attacks missed"

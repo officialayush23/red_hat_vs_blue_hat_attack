@@ -73,8 +73,19 @@ export function outcomeOf(row) {
   return row.detected ? "cleared" : "false_positive";
 }
 
+// NOTE the key `blocked` is historical and means DETECTED. supabase_results.py
+// writes `detected = bool(predicted_fraud == is_fraud)` -- correctness at the
+// detector's own calibrated threshold -- which is a different question from
+// `decision`, the 0-100 band fusion.py assigns (approve <=30 / review <=60 /
+// challenge <=80 / block). They genuinely diverge: 3,797 fraud rows are
+// detected=true AND decision='approve', with fused_risk_score 9.35-25.0.
+// Calling that "Blocked" claimed the system stopped attacks it in fact let
+// through, and put "50.0 REVIEW / Blocked" on the same ticker line.
 export const OUTCOME_META = {
-  blocked: { label: "Blocked", blurb: "Real attack, correctly stopped at the Blue Team boundary" },
+  blocked: {
+    label: "Detected",
+    blurb: "Real attack, correctly identified as fraud by the detector -- see the decision column for what was then done with it",
+  },
   missed: { label: "Missed", blurb: "Real attack that slipped past every detector and reached the system" },
   cleared: { label: "Cleared", blurb: "Legitimate traffic, correctly allowed through" },
   false_positive: { label: "False positive", blurb: "Legitimate traffic wrongly blocked -- real customer friction" },
@@ -184,24 +195,32 @@ export async function getCorpusStats() {
     return count ?? 0;
   };
   const base = () => supabase.from("evaluation_results").select("id", { count: "exact", head: true });
-  const [total, fraudBlocked, fraudMissed, legitCleared, legitFlagged, cases] = await Promise.all([
-    countOf(() => base()),
-    countOf(() => base().eq("actual_label", "fraud").eq("detected", true)),
-    countOf(() => base().eq("actual_label", "fraud").eq("detected", false)),
-    countOf(() => base().eq("actual_label", "legit").eq("detected", true)),
-    countOf(() => base().eq("actual_label", "legit").eq("detected", false)),
-    countOf(() => supabase.from("attack_cases").select("id", { count: "exact", head: true })),
-  ]);
-  const fraudTotal = fraudBlocked + fraudMissed;
+  // fraudDetected and fraudBlockedOutright are DIFFERENT questions and the UI
+  // must not conflate them -- see the OUTCOME_META note above. Both are asked
+  // for so the tile can state the detection rate and the block rate together
+  // rather than showing one under the other's name.
+  const [total, fraudDetected, fraudMissed, fraudBlockedOutright, legitCleared, legitFlagged, cases] =
+    await Promise.all([
+      countOf(() => base()),
+      countOf(() => base().eq("actual_label", "fraud").eq("detected", true)),
+      countOf(() => base().eq("actual_label", "fraud").eq("detected", false)),
+      countOf(() => base().eq("actual_label", "fraud").eq("decision", "block")),
+      countOf(() => base().eq("actual_label", "legit").eq("detected", true)),
+      countOf(() => base().eq("actual_label", "legit").eq("detected", false)),
+      countOf(() => supabase.from("attack_cases").select("id", { count: "exact", head: true })),
+    ]);
+  const fraudTotal = fraudDetected + fraudMissed;
   const legitTotal = legitCleared + legitFlagged;
   return {
     scoredCases: total,
     attackCases: cases,
-    fraudBlocked,
+    fraudDetected,
+    fraudBlockedOutright,
     fraudMissed,
     legitCleared,
     falsePositives: legitFlagged,
-    recallPct: fraudTotal ? (fraudBlocked / fraudTotal) * 100 : 0,
+    detectionPct: fraudTotal ? (fraudDetected / fraudTotal) * 100 : 0,
+    blockedPct: fraudTotal ? (fraudBlockedOutright / fraudTotal) * 100 : 0,
     falsePositivePct: legitTotal ? (legitFlagged / legitTotal) * 100 : 0,
   };
 }
