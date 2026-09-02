@@ -49,6 +49,7 @@ Then, e.g.:
 """
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
 import subprocess
@@ -405,17 +406,40 @@ async def stop_agent_run(run_id: str):
         state["status"] = "stopped"
         state["finished_at"] = time.time()
 
+    # campaign_runs has NO status COLUMN. The run's status lives inside the
+    # stage_results jsonb, at meta.status -- that is what agent_runner.py's
+    # RunTracker.update_meta() writes and what the frontend's
+    # mapCampaignRun() reads (row.stage_results?.meta?.status). The first
+    # version of this endpoint updated a "status" column, which does not
+    # exist, so every stop reported FAILED and no run was ever marked.
+    #
+    # Read-modify-write rather than a jsonb path update, because supabase-py
+    # has no deep-merge: fetching the row and putting back a patched object is
+    # the honest way to change one key without dropping the other nine.
     marked = None
     try:
         from db.supabase_client import get_service_client
         client = await asyncio.to_thread(get_service_client)
-        await asyncio.to_thread(
-            lambda: client.table("campaign_runs")
-            .update({"status": "stopped"})
-            .eq("campaign_id", run_id)
-            .execute()
-        )
-        marked = "campaign_runs.status = stopped"
+
+        def _mark():
+            row = (client.table("campaign_runs")
+                   .select("stage_results")
+                   .eq("campaign_id", run_id)
+                   .maybe_single().execute()).data
+            if row is None:
+                return "no campaign_runs row for this id"
+            stage = row.get("stage_results") or {}
+            meta = dict(stage.get("meta") or {})
+            was = meta.get("status")
+            meta["status"] = "stopped"
+            meta["stoppedAt"] = datetime.now(timezone.utc).isoformat()
+            stage = {**stage, "meta": meta}
+            (client.table("campaign_runs")
+             .update({"stage_results": stage})
+             .eq("campaign_id", run_id).execute())
+            return f"stage_results.meta.status: {was} -> stopped"
+
+        marked = await asyncio.to_thread(_mark)
     except Exception as exc:
         # Report it. A stop that half-worked must not look like a clean stop.
         marked = f"FAILED to mark campaign_runs: {type(exc).__name__}: {exc}"
