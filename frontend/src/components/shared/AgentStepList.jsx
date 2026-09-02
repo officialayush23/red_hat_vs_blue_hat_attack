@@ -14,7 +14,7 @@ function TraceField({ label, value }) {
   if (!value || value === "—") return null;
   return <div className="flex gap-2 text-[11px] leading-relaxed">
       <span className="w-16 shrink-0 font-semibold tracking-wide text-muted-foreground/70 uppercase">{label}</span>
-      <span className="min-w-0 flex-1 text-muted-foreground">{value}</span>
+      <span className="min-w-0 flex-1 break-words text-muted-foreground">{value}</span>
     </div>;
 }
 export function AgentStepList({

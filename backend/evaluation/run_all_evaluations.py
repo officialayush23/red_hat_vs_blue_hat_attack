@@ -107,9 +107,18 @@ STEP_NAMES = [name for name, _ in STEPS]
 # paddlepaddle at all -- routing that run into paddleocr_env would launch it
 # with an interpreter that has no rapidocr installed, and it would fail for
 # a reason unrelated to anything real.
+# 2026-09-02: this condition included "" -- an UNSET DOC_OCR_BACKEND -- and so
+# did exactly what the comment above warns against. The detector's default is
+# rapidocr (_BACKEND_ORDER[0] in document_consistency_detector.py), which lives
+# in the main `red` venv, but an unset variable routed the step into
+# paddleocr_env, an interpreter with no rapidocr in it and with the broken
+# Windows paddlepaddle path (os error 1455, a pagefile commitment failure at
+# first inference). A war-room run then spent the FULL 1800s per-step timeout
+# on a step that could not have succeeded. Only an explicit paddlevl request
+# should select that venv.
 _DOC_OCR_BACKEND = os.environ.get("DOC_OCR_BACKEND", "").strip().lower()
 VENV_OVERRIDES = ({"document_consistency": "paddleocr_env"}
-                  if _DOC_OCR_BACKEND in ("", "paddlevl") else {})
+                  if _DOC_OCR_BACKEND == "paddlevl" else {})
 
 # Substring match against a failed step's combined stdout+stderr -> a one-line
 # fix. Cheap and worth it: the first real batch run hit both of these at once

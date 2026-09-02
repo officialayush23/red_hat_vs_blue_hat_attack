@@ -91,7 +91,12 @@ export function WarRoomPage() {
     cssVar: "--warroom-rail",
     defaultWidth: 380,
     minWidth: 300,
-    maxWidth: 640,
+    // 640 was too narrow for the widest thing the rail actually has to show:
+    // Threat Research's RESULT line enumerates every family's train/held-out
+    // combinations and their dimension lists, and it ran off the right edge
+    // with the handle already at its maximum. A cap you cannot drag past is
+    // not a resizable panel.
+    maxWidth: 900,
     side: "right",
   });
 
