@@ -145,25 +145,31 @@ Two caveats that must travel with these numbers:
 - **phishing's 0.875 is an average across a 100% case and a 36% case.** See
   §4a.
 
-### 4a. The phishing finding (resolved 2026-09-02)
+### 4a. The phishing finding (2026-09-02) — half-resolved, and read the correction
 
 The long-open question — is the 0.943-own-validation vs 0.75-held-out drop
-overfitting, distribution shift, or a hard split? — is answered, from the
-persisted per-case rows rather than from prose. **It is none of those: the
-classifier is substantially an urgency detector.**
+overfitting, distribution shift, or a hard split? — is answered from the
+persisted per-case rows: **it is none of those.** It is one localised blind
+spot. Five of the six generated combinations are caught 100% (Hinglish
+included — the obvious suspect, and wrong). One is caught 36%: the low-urgency,
+link-free `employer_hr` email, mean score 0.288, which is *below* the mean of
+the legitimate messages (0.403). No threshold separates those two, which makes
+this the strongest concrete argument in the project for the Section 6 fusion
+design.
 
-Every held-out combination with `urgency: high` is caught 100% (Hinglish
-included — that was the obvious suspect and it was wrong). The one combination
-with `urgency: low` scores a mean of 0.288, *below the mean of the legitimate
-messages* (0.403): it ranks as more innocuous than the average real message.
-The same cue produces the 39% false-positive rate, since an urgently-worded
-genuine payment reminder trips it. No threshold separates a 0.288 fraud from a
-0.403 legitimate message — which makes this the strongest concrete argument in
-the project for the Section 6 fusion design.
+**What is NOT established is the cause, and an earlier version of this section
+claimed it was.** In this corpus every high-urgency case carries a URL and
+every low-urgency one carries none — urgency and URL presence are perfectly
+confounded — and the classifier has features for both (four of its ten hand
+features are URL features). Do not repeat "it is an urgency detector"; the data
+cannot support it.
 
-Full working, with the per-combination table, is at the end of
-`docs/EVALUATION_RESULTS.md`. The targeted fix is training data: low-urgency
-phishing is underrepresented in difraud's phishing/sms domains.
+URL presence is not a mutation dimension in `split_policy` at all, it rides
+along with the template. **The next experiment is a generation change, not a
+retrain:** emit the two missing cells (low-urgency *with* a shortened link,
+high-urgency *without* one), re-score, and only then decide what to retrain.
+
+Full working and the correction are at the end of `docs/EVALUATION_RESULTS.md`.
 
 ## 5. What exists now (this changed a lot — read before planning)
 

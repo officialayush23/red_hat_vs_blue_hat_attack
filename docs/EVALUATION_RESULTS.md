@@ -1083,15 +1083,54 @@ silently come to depend on, which no same-distribution validation split could
 have surfaced — difraud's phishing corpus is overwhelmingly high-urgency, so
 0.943 recall there was measuring the easy case at full strength.
 
+### CORRECTION (same day, before anything was built on this)
+
+The claim above -- "the classifier is substantially an urgency detector" --
+**overreaches what this data can show.** Checking the artifacts rather than only
+the mutation parameters:
+
+| urgency | has a URL | n | caught |
+|---|---|---:|---:|
+| high | yes | 312 | 100% |
+| low | no | 88 | 36.4% |
+
+There is no third row. **In this corpus, urgency and URL presence are perfectly
+confounded**: every high-urgency phishing case carries a link, every low-urgency
+one carries none. Four of the classifier's ten hand-built features are URL
+features (`has_url`, `url_uses_shortener`, `url_suspicious_tld`,
+`url_hyphenated_domain`) and two are urgency-ish (`urgency_phrase_count`,
+`currency_with_deadline`), so both hypotheses fit the numbers exactly as well.
+
+The caught example makes the confound concrete. `phishing_scam_0556c8ce0810` is
+tagged `urgency: high`, yet its body reads *"koi hurry nahi hai"* -- no hurry --
+and still scores 0.755 and is caught. What it does have is `bit.ly/3xVerifyNow`.
+That single case is not evidence on its own, but it is enough to show the
+parameter label and the text's actual urgency can disagree, which is precisely
+what a confounded design cannot resolve.
+
+**What survives:** the detector reliably misses one region of attack space --
+low-urgency, link-free messages -- and that region ranks below the average
+legitimate message. The failure is real, reproducible, and was found by the
+held-out split. **What does not survive:** any claim about WHICH cue causes it.
+
+**This is a gap in the generator, not only in the detector.** `split_policy`'s
+phishing dimensions are urgency / impersonation_target / channel / language;
+URL presence is not a dimension at all, it rides along with the template. The
+experiment that would settle it is to generate the two missing cells --
+low-urgency *with* a shortened link, and high-urgency *without* one -- and
+re-score. Until that runs, the honest statement is the failure region, not its
+cause.
+
 ### Consequences
 
 1. **The honest headline is per-cue, not overall.** Recall 0.875 overall is an
    average across a 100% case and a 36% case. Quoting it as one number hides
    the only failure mode this detector has.
-2. **The 39% false-positive rate has the same root.** Bonafide messages that
-   happen to be worded urgently (a real payment reminder, a delivery notice)
-   are scored fraudulent for the same reason low-urgency fraud is scored
-   benign. Both errors are the model reading urgency and calling it intent.
+2. **The 39% false-positive rate is likely the same mechanism, whichever it
+   is.** Bonafide messages that happen to look like the caught class -- urgent
+   wording, a link, or both -- are scored fraudulent, while fraud that looks
+   like neither is scored benign. Same boundary, both directions. Naming the
+   specific cue requires the de-confounding run above.
 3. **This is the strongest argument in the project for Section 6's fusion
    design.** A signal that is excellent on one cue and inverted on another is
    dangerous alone and useful in combination — a low-urgency employer-HR
@@ -1099,7 +1138,8 @@ have surfaced — difraud's phishing corpus is overwhelmingly high-urgency, so
    the Customer Universe has never seen. The fix is not a better threshold for
    this detector; no threshold exists that separates a 0.288 fraud from a
    0.403 legitimate message.
-4. **The training-data fix is specific and cheap:** low-urgency phishing is
-   underrepresented in difraud's phishing/sms domains. Adding it (or
-   down-weighting the urgency hand features so TF-IDF content has to carry more
-   of the decision) is a targeted retrain, not a redesign.
+4. **The first fix is a generation change, not a retrain.** Add URL presence
+   as a real mutation dimension so the two cues can be separated, re-score, and
+   only then decide whether the retrain should target low-urgency text,
+   link-free text, or both. Retraining now would be aiming at a cause that has
+   not been established.

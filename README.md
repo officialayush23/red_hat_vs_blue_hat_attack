@@ -88,18 +88,21 @@ The GNN is shown at its real value. Round 5 added genuine graph-topology, tempor
 
 **A threshold picked on validation data did not transfer.** `phishing_classifier`'s decision threshold, chosen with `best_f1_threshold()` against real difraud validation data, produced a **39% false-positive rate** when the same frozen detector was re-scored against our own generated evidence-gate set. Nothing about the model changed — only the distribution it was asked to decide on.
 
-Recomputing that detector's scores per mutation combination showed why, and it
-is sharper than "distribution shift": **the classifier is substantially an
-urgency detector**. Every held-out combination carrying `urgency: high` is
-caught 100% of the time — Hinglish included, which was the obvious suspect and
-was wrong. The one combination carrying `urgency: low` scores a mean of 0.288,
-*below the mean of the legitimate messages* (0.403). Low-urgency phishing
-doesn't merely slip the threshold; it ranks as more innocuous than the average
-real message, and the same cue is what makes an urgently-worded genuine payment
-reminder a false positive. No threshold separates those two. The held-out split
-found this precisely because `urgency` is one of its split dimensions — a
-same-distribution validation set could not have, since difraud's phishing
-corpus is overwhelmingly high-urgency.
+Recomputing that detector's scores per mutation combination localised it. Five
+of the six generated combinations are caught **100%** of the time — Hinglish
+included, which was the obvious suspect and was wrong. One is caught **36%**:
+the low-urgency, link-free `employer_hr` email, which scores a mean of 0.288,
+*below the mean of the legitimate messages* (0.403). It doesn't merely slip the
+threshold; it ranks as more innocuous than the average real message, and no
+threshold separates those two.
+
+What that failure region *cannot* tell us is which cue causes it. In this corpus
+every high-urgency case carries a link and every low-urgency one carries none —
+**urgency and URL presence are perfectly confounded**, and the classifier has
+features for both. URL presence isn't a mutation dimension at all; it rides
+along with the template. So the finding is a real, reproducible blind spot the
+held-out split exposed, plus a concrete gap in the *generator* — the two missing
+cells (low-urgency with a link, high-urgency without) are what would settle it.
 
 The architectural response is in `docs/TECHNICAL_SPEC.md` §6: a detector's job is to output a *well-ranked continuous score*; the ALLOW / REVIEW / CHALLENGE / BLOCK decision is made one layer up, in fusion, where a miscalibrated signal gets corroborated or discounted by the others. No single detector's threshold is ever the final fraud decision. This is what lets an honestly-documented imperfect signal be a component rather than a liability.
 
