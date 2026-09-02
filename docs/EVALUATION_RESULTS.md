@@ -1155,3 +1155,78 @@ cause.
 - Independent, local re-run of the 2580 real held-out mule_network cases, using the frozen weights saved from notebooks/train_gnn_mule_network.ipynb.
 - recall=0.0019 at decision_threshold=0.8222 (threshold selected on IBM AML's own held-out split, see the notebook).
 - This is a second, independent check against the Colab run's own reported number in gnn_metrics_snippet.json -- see docs/DATASETS.md.
+
+## GNN — the recall number understates the problem (added by hand, 2026-09-02, not script-generated — see header)
+
+Local re-verification, `evaluation/eval_gnn.py`, frozen round-5 `gnn.pt`, all
+2,580 real held-out `mule_network` cases:
+
+```
+recall 0.0019 (5/2580) at threshold=0.8222
+score distribution: min=0.6113  median=0.7510  max=0.8231
+```
+
+**The distribution is the finding, not the recall.** Every one of 2,580 cases
+scores between 0.61 and 0.82 — a spread of 0.21 across the entire held-out set
+— and the decision threshold, 0.8222, sits essentially at the maximum (0.8231).
+The five "detections" are the cases that happen to clear it by about a
+thousandth.
+
+This is a different failure from "the model is weak". A weak-but-working
+detector separates fraud from non-fraud badly; this one assigns nearly the same
+score to everything it is shown. **No threshold would fix it**, because there is
+almost no ordering to threshold. Reporting `recall = 0.0019` invites the reading
+"needs tuning", and tuning is precisely what cannot help here.
+
+Two things follow:
+
+- **The threshold does not transfer.** 0.8222 was calibrated on IBM AML's own
+  held-out split, where the model does discriminate. Applied to our generated
+  rings it lands at the top of a collapsed distribution. This is the same
+  transfer failure already documented for `phishing_classifier`
+  (`best_f1_threshold` on difraud → 39% FPR on our data), and it is the second
+  independent instance of the pattern that TECHNICAL_SPEC §6 exists to handle.
+- **It is a representation problem, in the features or the domain gap**, not a
+  calibration or capacity problem. The round-5 features were built for IBM AML's
+  transaction graph; our `ring_gen.py` rings are small, synthetic and
+  structurally regular, and the encoder evidently finds little in them to vary
+  its output over.
+
+### Corroboration
+
+Three independent runs agree, which is why this is stated as a property of the
+model rather than a bug in one harness:
+
+| Run | recall | n |
+|---|---:|---:|
+| Colab, round 5, adversarial | 0.0010 | — |
+| Local re-verify (earlier corpus) | 0.0019 | 1,580 |
+| Local re-verify (this run) | 0.0019 | 2,580 |
+
+`gnn_colab_round5_reported`'s 0.0745 is a different measurement — IBM AML's own
+held-out edges, not our generated cases — and the gap between 0.0745 there and
+0.0019 here *is* the domain gap, stated numerically.
+
+### Status, unchanged
+
+The GNN remains `experimental` and contributes nothing to the fused score.
+Mule-network detection rests on the sequence features in the tabular models.
+Nothing here changes what the system claims; it makes the reason specific.
+
+### What would actually be worth trying
+
+Not threshold tuning, and not more epochs. In rough order of expected value:
+
+1. **Check the collapse is real and not a scaling artefact.** Round 5 added
+   train-period z-score normalization (`node_mean/std`, `edge_mean/std` in the
+   checkpoint). If our rings sit far outside those statistics, every feature
+   saturates to a similar normalized value and a flat output is the expected
+   consequence. Print the normalized feature ranges for our cases against the
+   training statistics — this is cheap and would either explain the whole
+   finding or rule it out.
+2. **Train on our own ring topology**, or fine-tune on it, rather than
+   transferring an IBM-AML-trained encoder to a different graph generator.
+3. **Only then** reconsider architecture.
+
+The eval is now fast enough (36s cold, ~0.6s warm, down from 803s) that all
+three are cheap to test — which is the practical reason the speedup mattered.
