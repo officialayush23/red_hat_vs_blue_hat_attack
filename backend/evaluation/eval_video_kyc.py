@@ -67,8 +67,11 @@ def _score_with_progress(detector: VideoKycDetector, cases: list) -> tuple:
     scores = []
     evidences = []
     for i, case in enumerate(cases, 1):
-        video_path = REPO_ROOT / case["video_path"]
-        reference_photo_path = REPO_ROOT / case["reference_photo_path"]
+        # A path stored in a JSON file written on Windows is backslash-separated;
+        # PurePosixPath does not split on it, so this join silently produces one
+        # bogus component on Linux/Colab. Same fix as eval_document_consistency.py.
+        video_path = REPO_ROOT / case["video_path"].replace("\\", "/")
+        reference_photo_path = REPO_ROOT / case["reference_photo_path"].replace("\\", "/")
         t0 = time.monotonic()
         score, evidence = detector.score_with_evidence(video_path, reference_photo_path)
         dt = time.monotonic() - t0

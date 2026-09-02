@@ -85,7 +85,10 @@ def _document_attack_rows(client) -> list:
     rows = []
     for path in sorted((GENERATED_DIR / "document_attacks").glob("*/*.json")):
         raw = json.loads(path.read_text())
-        image_local = REPO_ROOT / raw["image_path"]  # already OS-native separators, see eval_document_consistency.py
+        # A path stored in a JSON file written on Windows is backslash-separated;
+        # PurePosixPath does not split on it, so this join silently produces one
+        # bogus component on Linux/Colab. Same fix as eval_document_consistency.py.
+        image_local = REPO_ROOT / raw["image_path"].replace("\\", "/")
         storage_path = f"document_fraud/{raw['split_portion']}/{image_local.name}"
         url = _upload_file(client, image_local, storage_path) if image_local.exists() else None
         rows.append({
@@ -134,7 +137,10 @@ def _voice_attack_rows(client) -> list:
     rows = []
     for path in sorted((GENERATED_DIR / "voice_attacks").glob("*/*.json")):
         raw = json.loads(path.read_text())
-        audio_local = REPO_ROOT / raw["audio_path"]
+        # A path stored in a JSON file written on Windows is backslash-separated;
+        # PurePosixPath does not split on it, so this join silently produces one
+        # bogus component on Linux/Colab. Same fix as eval_document_consistency.py.
+        audio_local = REPO_ROOT / raw["audio_path"].replace("\\", "/")
         storage_path = f"voice_scam/{raw['split_portion']}/{audio_local.name}"
         url = _upload_file(client, audio_local, storage_path) if audio_local.exists() else None
         rows.append({

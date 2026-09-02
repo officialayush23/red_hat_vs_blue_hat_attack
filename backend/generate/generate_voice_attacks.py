@@ -120,7 +120,10 @@ def _generate_case(combo: dict, split_portion: str, rng: random.Random,
     if resolved["voice_characteristics"] == "cloned_customer":
         # The actual voice-impersonation attack (Section 4b-i): clone this
         # specific customer's own registered reference voice.
-        reference_wav = REPO_ROOT / customer["voice_ref"]
+        # A path stored in a JSON file written on Windows is backslash-separated;
+        # PurePosixPath does not split on it, so this join silently produces one
+        # bogus component on Linux/Colab. Same fix as eval_document_consistency.py.
+        reference_wav = REPO_ROOT / customer["voice_ref"].replace("\\", "/")
     else:
         reference_wav = rng.choice(bonafide_paths)
 

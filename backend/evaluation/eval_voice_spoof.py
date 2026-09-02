@@ -101,7 +101,10 @@ def main() -> None:
     bonafide_scores = detector.score_batch(bonafide_paths)
 
     cases = [json.loads(p.read_text()) for p in case_paths]
-    audio_paths = [REPO_ROOT / c["audio_path"] for c in cases]
+    # A path stored in a JSON file written on Windows is backslash-separated;
+    # PurePosixPath does not split on it, so this join silently produces one
+    # bogus component on Linux/Colab. Same fix as eval_document_consistency.py.
+    audio_paths = [REPO_ROOT / c["audio_path"].replace("\\", "/") for c in cases]
     print(f"Scoring {len(audio_paths)} generated (spoof) clips...")
     spoof_scores = detector.score_batch(audio_paths)
 
