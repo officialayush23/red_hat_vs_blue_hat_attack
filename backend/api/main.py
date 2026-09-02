@@ -127,6 +127,13 @@ class StartAgentRunRequest(BaseModel):
     severity: str = "adaptive"
     scenario_count: int = 200
     seed: int = 42
+    # "reuse" scores the ~25.7k cases already stored rather than
+    # synthesizing new ones -- default, because the same population every
+    # run is what makes a detection-rate delta attributable to the defense.
+    case_source: str = "reuse"
+    # Which region of split_policy this run attacks: training-allowed
+    # combinations, held-out-only combinations, or both.
+    difficulty: str = "held_out"
 
 
 class HydrateRequest(BaseModel):
@@ -336,6 +343,7 @@ async def start_agent_run(req: StartAgentRunRequest):
         "--objective", req.objective, "--scope", ",".join(req.scope),
         "--severity", req.severity, "--scenario-count", str(req.scenario_count),
         "--seed", str(req.seed), "--run-id", run_id,
+        "--case-source", req.case_source, "--difficulty", req.difficulty,
     ]
     _orch_runs[run_id] = {"run_id": run_id, "status": "launched", "started_at": time.time()}
 

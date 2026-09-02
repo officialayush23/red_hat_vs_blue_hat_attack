@@ -35,6 +35,11 @@ export function CreateRunPage() {
   const [severity, setSeverity] = useState("adaptive");
   const [scenarioCount, setScenarioCount] = useState(1000);
   const [objective, setObjective] = useState("Harden the fraud defense against adaptive payment fraud.");
+  // Reuse by default: ~25.7k real cases are already stored, and scoring the
+  // same population every run is what makes a detection-rate delta mean the
+  // DEFENSE changed rather than the attacks having changed underneath it.
+  const [caseSource, setCaseSource] = useState("reuse");
+  const [difficulty, setDifficulty] = useState("held_out");
   function toggleScope(category) {
     setScope(prev => prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]);
   }
@@ -47,7 +52,9 @@ export function CreateRunPage() {
       objective,
       scope,
       severity,
-      scenarioCount
+      scenarioCount,
+      caseSource,
+      difficulty
     });
     // Straight into the war room: the attack stream is the screen, not a
     // page you navigate to afterwards.
@@ -185,6 +192,55 @@ export function CreateRunPage() {
                   </SelectItem>)}
               </SelectContent>
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cases &amp; difficulty</CardTitle>
+          <CardDescription>
+            What this run attacks with. Difficulty is not a slider on top of the data — it selects which region
+            of the real split policy (backend/evaluation/split_policy.py) the run draws from.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label>Cases</Label>
+            <Select value={caseSource} onValueChange={(v) => setCaseSource(v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reuse">Reuse the stored corpus</SelectItem>
+                <SelectItem value="generate">Generate fresh attacks</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {caseSource === "reuse"
+                ? "Scores cases already generated and stored. Faster, and comparable across runs because every run scores the same population."
+                : "Runs the Red Team generators first. Slower, and each run scores a different population — a detection-rate change then reflects both the defense and the new attacks."}
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Difficulty</Label>
+            <Select value={difficulty} onValueChange={(v) => setDifficulty(v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="held_out">Hard — held-out-only combinations</SelectItem>
+                <SelectItem value="mixed">Mixed — both regions</SelectItem>
+                <SelectItem value="training">Easier — training-allowed combinations</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {difficulty === "held_out"
+                ? "Mutation combinations the frozen models have never seen. This is the region that supports a \u201cdetects novel fraud\u201d claim."
+                : difficulty === "training"
+                  ? "Combinations the models were fitted against. Expect high detection — this measures fit, not novelty."
+                  : "Both regions together. The headline number then averages a seen and an unseen population."}
+            </p>
           </div>
         </CardContent>
       </Card>

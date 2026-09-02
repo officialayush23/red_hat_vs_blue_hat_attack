@@ -524,12 +524,18 @@ class RunTracker:
     after every stage starts AND completes -- see module docstring for the
     exact jsonb shape."""
 
-    def __init__(self, client, run_id: str, objective: str, scope: list, severity: str, scenario_count: int):
+    def __init__(self, client, run_id: str, objective: str, scope: list, severity: str,
+                 scenario_count: int, case_source: str = "reuse", difficulty: str = "held_out"):
         self.client = client
         self.run_id = run_id
         self.meta = {
             "objective": objective, "scope": scope, "severity": severity,
             "scenarioCount": scenario_count, "status": "running",
+            # Recorded so a result can never be read without knowing WHAT was
+            # attacked. "100% detection" against training-allowed combinations
+            # and against held-out-only combinations are different claims, and
+            # the run record has to carry which one it is.
+            "caseSource": case_source, "difficulty": difficulty,
             "currentIteration": 1, "totalIterations": 2 if severity == "adaptive" else 1,
             "createdAt": _now_iso(),
         }
@@ -678,6 +684,25 @@ def main() -> int:
     parser.add_argument("--scenario-count", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--run-id", type=str, default=None, help="Reuse a specific run id (default: generated)")
+    # WHY REUSE IS THE DEFAULT. There are ~25.7k real cases already in
+    # attack_cases and on disk under data/generated/. Regenerating them on
+    # every run costs minutes, is the step that failed in run_1252658138, and
+    # makes runs incomparable -- each one scores a different population, so a
+    # detection-rate change between runs conflates "the defense changed" with
+    # "the attacks changed". Reuse scores the SAME stored corpus every time,
+    # which is what makes a before/after delta mean anything. Generate fresh
+    # when the point is to demonstrate the Red Team actually producing new
+    # artifacts, or when a combination has no stored cases yet.
+    parser.add_argument("--case-source", type=str, default="reuse", choices=["reuse", "generate"],
+                        help="reuse: score the stored corpus (default). generate: synthesize new cases first.")
+    # Difficulty is not a knob invented for the UI -- it selects which region
+    # of the REAL split_policy space this run draws from. training-allowed
+    # combinations are the ones the models were fitted against; held-out-only
+    # combinations are, by construction, ones they have never seen. That is
+    # the only definition of "harder" this codebase can back with evidence.
+    parser.add_argument("--difficulty", type=str, default="held_out",
+                        choices=["training", "held_out", "mixed"],
+                        help="Which split_policy region to attack from. held_out is hardest (default).")
     args = parser.parse_args()
 
     scope = [s.strip() for s in args.scope.split(",") if s.strip()]
@@ -695,7 +720,8 @@ def main() -> int:
     # so nothing can be spawned without it.
     os.environ["FRAUDSHIELD_CAMPAIGN_ID"] = run_id
 
-    tracker = RunTracker(client, run_id, args.objective, scope, args.severity, args.scenario_count)
+    tracker = RunTracker(client, run_id, args.objective, scope, args.severity, args.scenario_count,
+                         case_source=args.case_source, difficulty=args.difficulty)
     # Every sub-step that actually failed, collected across stages. A run with
     # anything in here is NOT "completed" -- see tracker.finish().
     stage_failures = []
@@ -782,20 +808,40 @@ def main() -> int:
             next_="Hand off to Attack Generator",
         )
 
-        # ---- 4. attack-generator: REAL subprocess ----
-        gen_only = ",".join(gen_steps_needed + ["backfill_attack_cases", "sync_model_registry"])
-        gen_step = tracker.start_step("attack-generator", f"Running generate/run_all_generation.py --only {gen_only} ...")
+        # ---- 4. attack-generator: REAL subprocess, or a deliberate skip ----
+        #
+        # In reuse mode the generators are NOT run. The backfill and registry
+        # sync still are: they are cheap, they are what keeps
+        # evaluation_results' foreign key to attack_cases satisfiable, and
+        # skipping them is how a run ends up scoring fine and persisting zero
+        # rows. What is skipped is only the synthesis of new artifacts.
+        reuse_cases = args.case_source == "reuse"
+        gen_steps_to_run = ([] if reuse_cases else gen_steps_needed) + [
+            "backfill_attack_cases", "sync_model_registry"]
+        gen_only = ",".join(gen_steps_to_run)
+        gen_step = tracker.start_step(
+            "attack-generator",
+            (f"Reusing the stored corpus -- no generation. Running "
+             f"generate/run_all_generation.py --only {gen_only} ..." if reuse_cases
+             else f"Running generate/run_all_generation.py --only {gen_only} ..."))
+        gen_args = ["--only", gen_only, "--seed", str(args.seed), "--json"]
+        if not reuse_cases:
+            gen_args = ["--only", gen_only, "--n-per-family", str(n_per_family),
+                        "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"]
         gen_result = _run_script_streaming(
-            GEN_SCRIPT, ["--only", gen_only, "--n-per-family", str(n_per_family),
-                          "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"],
-            on_line=_banner_reporter(tracker, gen_step, "generating..."))
+            GEN_SCRIPT, gen_args,
+            on_line=_banner_reporter(tracker, gen_step,
+                                     "reusing..." if reuse_cases else "generating..."))
         gen_summary_early = _parse_json_summary(gen_result.get("stdout", ""))
         gen_failed_steps = _failed_steps_from(gen_summary_early)
         stage_failures.extend(f"attack-generator/{f}" for f in gen_failed_steps)
         tracker.complete_step(
             gen_step,
             observation="Attack plan approved",
-            decision="Synthesize real adversarial cases via the project's real generators",
+            decision=("Score the stored corpus rather than synthesizing new cases -- same population "
+                      "every run, so a detection-rate change means the DEFENSE changed, not the attacks"
+                      if reuse_cases
+                      else "Synthesize real adversarial cases via the project's real generators"),
             tool="generate/run_all_generation.py (real subprocess)",
             action=f"generate/run_all_generation.py --only {gen_only} --n-per-family {n_per_family}",
             result=(f"Generation succeeded in {gen_result['seconds']}s" if gen_result["ok"]

@@ -148,12 +148,14 @@ export async function listGenerationRuns() {
 // directly into Supabase's campaign_runs table (see services/api/runs.js
 // and services/api/agents.js), which the frontend reads directly via the
 // anon key. This call only launches the process and returns its run_id.
-export async function startDefenseRun({ objective, scope, severity, scenarioCount, seed }) {
+export async function startDefenseRun({ objective, scope, severity, scenarioCount, seed, caseSource, difficulty }) {
   return apiPost("/runs/start", {
     objective,
     scope,
     severity,
     scenario_count: scenarioCount,
+    case_source: caseSource,
+    difficulty,
     seed,
   });
 }

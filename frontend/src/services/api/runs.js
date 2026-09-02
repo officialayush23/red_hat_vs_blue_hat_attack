@@ -23,6 +23,12 @@ function mapCampaignRun(row) {
     scope: meta.scope ?? [],
     severity: meta.severity ?? "medium",
     scenarioCount: meta.scenarioCount ?? 0,
+    // What this run actually attacked. Older runs predate these fields and
+    // report undefined rather than a default, because claiming a run drew
+    // from held-out combinations when nobody recorded which it drew from
+    // would be inventing provenance.
+    caseSource: meta.caseSource,
+    difficulty: meta.difficulty,
     status: meta.status ?? "queued", // "running" | "completed" | "failed"
     createdAt: meta.createdAt ?? row.created_at,
     completedAt: meta.completedAt,
@@ -109,6 +115,8 @@ export async function createRun(input) {
     scope: input.scope,
     severity: input.severity,
     scenarioCount: input.scenarioCount,
+    caseSource: input.caseSource,
+    difficulty: input.difficulty,
   });
   return { id: run_id };
 }

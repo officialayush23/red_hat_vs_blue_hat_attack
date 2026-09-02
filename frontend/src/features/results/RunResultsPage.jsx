@@ -128,6 +128,26 @@ export function RunResultsPage() {
         )}
       </Card>
 
+      {/* Provenance, above the numbers. "100% detection" against
+          training-allowed combinations and against held-out-only ones are
+          different claims, and the page previously showed neither. Runs from
+          before these fields existed say so rather than defaulting to the
+          flattering interpretation. */}
+      <p className="rounded-2xl border border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+        {run.caseSource === "reuse"
+          ? "Scored the stored corpus — no new cases generated for this run."
+          : run.caseSource === "generate"
+            ? "Generated fresh attacks, then scored them."
+            : "Case source not recorded for this run."}{" "}
+        {run.difficulty === "held_out"
+          ? "Drawn from held-out-only mutation combinations the frozen models have never seen."
+          : run.difficulty === "training"
+            ? "Drawn from training-allowed combinations — this measures fit, not novelty."
+            : run.difficulty === "mixed"
+              ? "Drawn from both training-allowed and held-out combinations."
+              : "Difficulty region not recorded for this run."}
+      </p>
+
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Precision" value={run.precision.toFixed(2)} />
         <StatCard label="Recall" value={run.recall.toFixed(2)} />
