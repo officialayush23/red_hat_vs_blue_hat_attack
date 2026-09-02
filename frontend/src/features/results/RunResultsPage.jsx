@@ -37,6 +37,23 @@ export function RunResultsPage() {
               </Button>} />
       </div>;
   }
+  // A run that was stopped or that failed before the evaluation stage has
+  // written NO aggregates. Every field below would fall back to its 0
+  // default and this page would report "0.0% detection, PRECISION 0.00,
+  // 0% of taxonomy" -- a claim that the defense caught nothing, which is
+  // the opposite of "we never measured". Refuse to render numbers that
+  // were never computed.
+  if (!run.hasEvaluation) {
+    return <div className="space-y-6">
+        <PageHeader eyebrow="Results" title={`Run results \u2014 ${run.id}`} description={run.objective} actions={<RunStatusBadge status={run.status} />} />
+        <EmptyState icon={<ClockIcon className="size-10" />} title="This run has no measured results" description={run.status === "running" ? "The run is still in flight and has not reached the evaluation stage yet. Watch it in the war room \u2014 results appear here once evaluation completes." : "This run ended before the evaluation stage, so no detection rate, precision or coverage was ever computed for it. The numbers are absent, not zero."} action={<Button asChild variant="outline">
+                <Link to={run.status === "running" ? `/runs/${run.id}/live` : "/runs"}>
+                  {run.status === "running" ? "Open war room" : "Back to defense runs"}
+                </Link>
+              </Button>} />
+      </div>;
+  }
+
   return <div className="space-y-6">
       <PageHeader eyebrow="Results" title={`Run results — ${run.id}`} description={run.objective} actions={<RunStatusBadge status={run.status} />} />
 

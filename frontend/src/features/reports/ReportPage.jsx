@@ -45,6 +45,18 @@ export function ReportPage() {
               </Button>} />
       </div>;
   }
+  // No evaluation stage ever ran for this run, so detection / precision /
+  // coverage were never computed. Exporting or displaying the 0 fallbacks
+  // would put fabricated results in front of a judge.
+  if (!report.hasEvaluation) {
+    return <div className="space-y-6">
+        <PageHeader eyebrow="Reports" title={`Defense report — ${report.runId}`} description={report.objective} />
+        <EmptyState icon={<FileJsonIcon className="size-10" />} title="Nothing measured to report" description={report.runStatus === "running" ? "This run is still in flight. Its report is generated once the evaluation stage completes." : "This run ended before the evaluation stage, so no detection rate, precision, coverage or weakness breakdown exists for it. Rather than print zeros that were never measured, this report is intentionally empty."} action={<Button asChild variant="outline">
+                <Link to="/runs">Back to defense runs</Link>
+              </Button>} />
+      </div>;
+  }
+
   return <div className="space-y-6">
       <PageHeader eyebrow="Reports" title={`Defense report — ${report.runId}`} description={report.objective} actions={<div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => downloadReport(report, "csv")}>
@@ -107,6 +119,11 @@ export function ReportPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {report.weaknesses.length === 0 && <TableRow>
+                  <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
+                    No weakness cleared the reporting threshold in this run — every scored family was detected.
+                  </TableCell>
+                </TableRow>}
               {report.weaknesses.map(w => <TableRow key={w.id}>
                   <TableCell className="text-muted-foreground">{ATTACK_CATEGORY_LABEL[w.category]}</TableCell>
                   <TableCell className="font-medium">{w.label}</TableCell>
@@ -128,6 +145,7 @@ export function ReportPage() {
             <CardDescription>Highest-miss-rate attack scenarios this run</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
+            {report.topMissedScenarios.length === 0 && <p className="text-sm text-muted-foreground">No missed scenarios in this run.</p>}
             {report.topMissedScenarios.map(s => <div key={s.name} className="flex items-center justify-between gap-3 rounded-2xl bg-muted/60 px-3 py-2 text-sm">
                 <div className="min-w-0">
                   <p className="truncate font-medium text-foreground">{s.name}</p>
@@ -162,6 +180,7 @@ export function ReportPage() {
         </CardHeader>
         <CardContent>
           <ul className="space-y-1.5 text-sm text-foreground">
+            {report.recommendedMitigations.length === 0 && <li className="text-muted-foreground">No mitigations outstanding — no weakness was found to act on.</li>}
             {report.recommendedMitigations.map(m => <li key={m} className="flex gap-2">
                 <span className="text-muted-foreground">·</span>
                 {m}

@@ -32,6 +32,12 @@ export async function fetchReport(runId) {
     runId: run.id,
     generatedAt: run.completedAt ?? new Date().toISOString(),
     objective: run.objective,
+    // Carried through from runs.js. A run that never reached the evaluation
+    // stage has no performance numbers at all; the zeros below are fallbacks
+    // to keep .toFixed() safe, NOT measurements. The page must not print
+    // them as results -- see ReportPage.jsx.
+    hasEvaluation: run.hasEvaluation,
+    runStatus: run.status,
     attackCoveragePct: run.attackCoveragePct ?? 0,
     dataSource: run.status === "completed" ? "Live — completed run" : `Live — run ${run.status}`,
     performance: {

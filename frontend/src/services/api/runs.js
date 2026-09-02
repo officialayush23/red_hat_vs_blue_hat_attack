@@ -49,6 +49,16 @@ function mapCampaignRun(row) {
     recall: meta.recall ?? 0,
     f1: meta.f1 ?? 0,
     prAuc: meta.prAuc ?? 0,
+    // WAS THIS RUN EVER EVALUATED. The `?? 0` defaults below are kept so
+    // arithmetic downstream cannot crash on undefined -- but a run stopped at
+    // the Blue Team stage never reaches the evaluation stage that writes any
+    // of these, so every one of them defaulted to 0 and the UI reported
+    // "Detection 0.0%", "PRECISION 0.00", "0% of taxonomy" for runs that had
+    // measured NOTHING. Indistinguishable from a defense that caught nothing,
+    // which is the opposite claim. Anything rendering these must check this
+    // flag first and show "not measured" rather than a number.
+    hasEvaluation:
+      meta.detectionRateAfter !== undefined && meta.detectionRateAfter !== null,
     detectionRateBefore: meta.detectionRateBefore ?? 0,
     detectionRateAfter: meta.detectionRateAfter ?? 0,
     improvementPct: meta.improvementPct ?? 0,

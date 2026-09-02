@@ -72,9 +72,15 @@ export function RunsListPage() {
                       {run.scope.length > 2 ? ` +${run.scope.length - 2}` : ""}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{run.scenarioCount.toLocaleString()}</TableCell>
-                    <TableCell className="text-right tabular-nums">{run.detectionRateAfter.toFixed(1)}%</TableCell>
+                    {/* A run that never reached the evaluation stage (stopped
+                        or failed mid-flight) has no detection number at all.
+                        Rendering the 0 default here claimed the defense caught
+                        nothing, which is the opposite of "not measured". */}
+                    <TableCell className="text-right tabular-nums">
+                      {run.hasEvaluation ? `${run.detectionRateAfter.toFixed(1)}%` : <span className="text-muted-foreground" title="This run never reached the evaluation stage">--</span>}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums text-primary">
-                      +{run.improvementPct.toFixed(1)}
+                      {run.hasEvaluation ? `+${run.improvementPct.toFixed(1)}` : <span className="text-muted-foreground">--</span>}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">

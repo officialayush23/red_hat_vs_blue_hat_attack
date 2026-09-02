@@ -22,7 +22,18 @@ export function DashboardPage() {
     data: runs,
     isLoading
   } = useRuns();
-  const latestRun = runs?.[0];
+  // runs[0] is the most RECENT run, which is not the same thing as the most
+  // recent run that produced numbers. A run stopped or failed before the
+  // evaluation stage writes no aggregates at all, so every tile on this
+  // dashboard fell back to 0 and the headline read "Detection rate 0.0%" --
+  // a claim the defense caught nothing, from a run that measured nothing.
+  // Show the newest run that actually reached evaluation, and say so.
+  // attacksTested > 0 as well as hasEvaluation: run_be7536b10d is a real
+  // completed run whose evaluation stage scored nothing (attacksTested 0,
+  // detectionRateAfter 100.0), and "100% detection over 0 attacks" is as
+  // misleading as a false zero. A headline needs a run with a denominator.
+  const latestRun = runs?.find(r => r.hasEvaluation && r.attacksTested > 0) ?? runs?.[0];
+  const latestRunIsStale = Boolean(runs?.length) && runs[0]?.id !== latestRun?.id;
   const {
     data: steps
   } = useAgentSteps(latestRun?.id ?? "");
@@ -53,6 +64,19 @@ export function DashboardPage() {
             <Link to="/runs/new">Start Adversarial Evaluation</Link>
           </Button>} />
 
+      {!(latestRun.hasEvaluation && latestRun.attacksTested > 0) && (
+        <EmptyState icon={<ShieldCheckIcon className="size-10" />} title="No run has produced measured results yet" description="Every defense run so far ended before the evaluation stage, so there is no detection rate, precision or coverage to display. The tiles below would show zeros that were never measured, so they are withheld." action={<Button asChild>
+                <Link to="/runs/new">Start Adversarial Evaluation</Link>
+              </Button>} />
+      )}
+
+      {latestRun.hasEvaluation && latestRun.attacksTested > 0 && <>
+      {latestRunIsStale && (
+        <p className="rounded-2xl border border-border bg-muted/50 px-4 py-2 text-sm text-muted-foreground">
+          Showing <span className="font-medium text-foreground">{latestRun.id}</span> — the most recent run that
+          completed evaluation. Newer runs exist but ended before producing measurable results.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Active defense runs" value={String(activeRuns)} icon={<ActivityIcon className="size-4" />} />
         <StatCard label="Attacks evaluated" value={latestRun.attacksTested.toLocaleString()} icon={<CrosshairIcon className="size-4" />} trendLabel={`${latestRun.id} · latest run`} />
@@ -91,6 +115,8 @@ export function DashboardPage() {
         </Card>
       </div>
 
+      </>}
+
       <Card>
         <CardHeader>
           <CardTitle>Recent evaluation runs</CardTitle>
@@ -101,7 +127,7 @@ export function DashboardPage() {
               <span className="font-medium text-foreground">{run.id}</span>
               <span className="hidden flex-1 truncate text-muted-foreground sm:block">{run.objective}</span>
               <span className="tabular-nums text-muted-foreground">
-                {run.detectionRateAfter.toFixed(1)}% detection
+                {run.hasEvaluation ? `${run.detectionRateAfter.toFixed(1)}% detection` : "not evaluated"}
               </span>
               <RunStatusBadge status={run.status} />
             </Link>)}
