@@ -109,16 +109,57 @@ export async function getAttack(id) {
 // each produced. This is the empirical counterpart to the family's
 // declared trainingAllowed/heldOutOnly lists: it shows what the generator
 // really emitted, not only what the policy permits.
+// Each combination now also carries its REAL caught-rate, which is the
+// most judge-relevant number this page can show and was previously absent.
+//
+// Why it matters, concretely: phishing_scam's headline recall is 0.875,
+// and the Model Performance page calls its evidence "strong" because
+// n=800. Both true. But that 0.875 is an average of five combinations
+// caught 100% of the time and ONE caught 36% of the time -- the classifier
+// leans heavily on urgency wording, so the single low-urgency combination
+// is the only thing it misses (see docs/EVALUATION_RESULTS.md). An
+// aggregate hides exactly the failure mode a judge should see, and a
+// per-combination rate is what the held-out split was designed to expose.
+//
+// caught-rate is computed from evaluation_results.detected over FRAUD
+// cases only. For a fraud case, detected == "the model called it fraud";
+// including bonafide rows would fold correct approvals into the same
+// number and inflate it, which is the exact conflation the dashboard tile
+// bug came from.
 export async function getGeneratedCombinations(family, sampleSize = 1000) {
   const { data, error } = await supabase
     .from("attack_cases")
-    .select("mutation_params,split_portion")
+    .select("id,mutation_params,split_portion,is_fraud")
     .eq("attack_family", family)
     .limit(sampleSize);
   if (error) throw error;
 
+  const rows = data ?? [];
+
+  // detected, per case id. Chunked because `in.(...)` goes in the URL and
+  // a thousand ids of ~30 chars each overruns what PostgREST will accept.
+  const detectedById = new Map();
+  const fraudIds = rows.filter((r) => r.is_fraud).map((r) => r.id);
+  for (let i = 0; i < fraudIds.length; i += 200) {
+    const chunk = fraudIds.slice(i, i + 200);
+    const { data: res, error: rErr } = await supabase
+      .from("evaluation_results")
+      .select("case_id,detected")
+      .in("case_id", chunk);
+    if (rErr) throw rErr;
+    for (const r of res ?? []) {
+      // A case scored by several evidence-gate runs has several rows. Count
+      // every one: the rate is over SCORED RESULTS, same unit as the
+      // family's headline detection rate, so the two are comparable.
+      const prev = detectedById.get(r.case_id) ?? { scored: 0, caught: 0 };
+      prev.scored += 1;
+      if (r.detected) prev.caught += 1;
+      detectedById.set(r.case_id, prev);
+    }
+  }
+
   const buckets = new Map();
-  for (const row of data ?? []) {
+  for (const row of rows) {
     const params = row.mutation_params ?? {};
     // resolved_levels is the generator's own record of the fully-resolved
     // combination (declared combo + family defaults) -- prefer it when
@@ -131,13 +172,29 @@ export async function getGeneratedCombinations(family, sampleSize = 1000) {
           .sort(([a], [b]) => a.localeCompare(b)),
       ),
     );
-    if (!buckets.has(key)) buckets.set(key, { combo: JSON.parse(key), train: 0, heldOut: 0, total: 0 });
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        combo: JSON.parse(key), train: 0, heldOut: 0, total: 0, scored: 0, caught: 0,
+      });
+    }
     const b = buckets.get(key);
     b.total += 1;
     if (row.split_portion === "held_out") b.heldOut += 1;
     else b.train += 1;
+    const d = detectedById.get(row.id);
+    if (d) {
+      b.scored += d.scored;
+      b.caught += d.caught;
+    }
   }
-  return [...buckets.values()].sort((a, b) => b.total - a.total);
+  return [...buckets.values()]
+    .map((b) => ({
+      ...b,
+      // null, not 0, when nothing was scored -- "never measured" is not
+      // "caught nothing". The table renders the two differently.
+      caughtRate: b.scored > 0 ? (b.caught / b.scored) * 100 : null,
+    }))
+    .sort((a, b) => b.total - a.total);
 }
 
 // GET /api/attacks/:id/cases — real generated cases for this family, each

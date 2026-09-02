@@ -206,7 +206,9 @@ export function AttackDetailPage() {
             <CardTitle>Combinations actually generated</CardTitle>
             <CardDescription>
               What the generator really emitted, counted from real attack_cases.mutation_params — the empirical
-              counterpart to the policy above.
+              counterpart to the policy above. &ldquo;Caught&rdquo; is the real share of scored fraud results the
+              defense called fraud, per combination: a family&apos;s headline detection rate is an average across
+              these rows, and an average can hide a single combination the defense reliably misses.
             </CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
@@ -217,15 +219,40 @@ export function AttackDetailPage() {
                   <TableHead className="text-right">Train</TableHead>
                   <TableHead className="text-right">Held-out</TableHead>
                   <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Caught</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {combos.slice(0, 12).map((c, i) => (
-                  <TableRow key={i}>
+                {/* Weakest FIRST. Sorting by volume buried the one row a
+                    judge most needs to see -- the combination the defense
+                    misses -- underneath four it catches perfectly. Rows
+                    with nothing scored sort last: absent is not weak. */}
+                {[...combos]
+                  .sort((a, b) => {
+                    if (a.caughtRate === null && b.caughtRate === null) return b.total - a.total;
+                    if (a.caughtRate === null) return 1;
+                    if (b.caughtRate === null) return -1;
+                    return a.caughtRate - b.caughtRate;
+                  })
+                  .slice(0, 12)
+                  .map((c, i) => (
+                  <TableRow key={i} className={cn(c.caughtRate !== null && c.caughtRate < 90 && "bg-destructive/5")}>
                     <TableCell><ComboChips combo={c.combo} /></TableCell>
                     <TableCell className="text-right tabular-nums">{c.train}</TableCell>
                     <TableCell className="text-right tabular-nums">{c.heldOut}</TableCell>
                     <TableCell className="text-right font-medium tabular-nums">{c.total}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {c.caughtRate === null ? (
+                        <span className="text-muted-foreground" title="No scored results for this combination">
+                          not scored
+                        </span>
+                      ) : (
+                        <span className={cn("font-medium", c.caughtRate < 90 && "text-destructive")}>
+                          {c.caughtRate.toFixed(0)}%
+                          <span className="ml-1 font-normal text-muted-foreground">({c.scored})</span>
+                        </span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
