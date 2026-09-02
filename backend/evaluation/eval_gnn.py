@@ -398,8 +398,16 @@ def main() -> None:
 
     result, ok = _load_gnn()
     if not ok:
+        # EXIT 2, NOT 0. A skipped step is not a passed step.
+        #
+        # This returned 0, so run_all_evaluations recorded "gnn OK", the
+        # orchestrator counted a clean stage, and a machine whose interpreter
+        # simply lacks torch_geometric -- or which has no gnn.pt -- produced a
+        # run that looked identical to one where the GNN really ran. The
+        # 803-second stage and the zero-second one were indistinguishable
+        # downstream.
         print("GNN evaluation skipped -- see message above.")
-        return
+        sys.exit(2)
     score_case_reference, score_cases, threshold = result
 
     # tools/storage_sync.py drops a `.storage_bundle.json` marker into every
@@ -460,6 +468,8 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise  # the deliberate exit(2) skip signal must not be caught below
     except Exception as exc:
         print(f"\nGNN EVAL FAILED: {exc}", file=sys.stderr)
         sys.exit(1)

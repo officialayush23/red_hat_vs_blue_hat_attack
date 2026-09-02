@@ -287,8 +287,16 @@ def _banner_reporter(tracker, step, running_detail: str):
             flush_failure()
             name, _, rest = text[4:-4].strip().partition(":")
             rest = rest.strip()
-            failed = not rest.upper().startswith("OK")
-            tracker.push_substep(step, name.strip(), "failed" if failed else "done", rest)
+            upper = rest.upper()
+            # SKIPPED is its own state: the step could not run here and said
+            # so, which is neither a pass nor a failure.
+            if upper.startswith("SKIPPED"):
+                sub_status, failed = "skipped", False
+            elif upper.startswith("OK"):
+                sub_status, failed = "done", False
+            else:
+                sub_status, failed = "failed", True
+            tracker.push_substep(step, name.strip(), sub_status, rest)
             if failed:
                 # Start collecting the tail/HINT lines that follow.
                 state["failed"] = name.strip()

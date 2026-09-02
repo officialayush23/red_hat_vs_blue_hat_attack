@@ -182,11 +182,20 @@ def _run_one(name: str, script: str, timeout: int, extra_args: "list | None" = N
             cwd=str(BACKEND_DIR), capture_output=True, text=True, timeout=timeout,
         )
         dt = time.monotonic() - t0
-        ok = proc.returncode == 0
+        # Exit code 2 means "this step could not run here and did not
+        # pretend to" -- an optional dependency or model file is absent.
+        # It is not a failure (nothing is broken) and emphatically not a
+        # success (nothing was measured), so it gets its own state instead
+        # of being folded into ok=True, which is what let a skipped GNN
+        # look exactly like an 803-second real one.
+        skipped = proc.returncode == 2
+        ok = proc.returncode == 0 or skipped
         combined = (proc.stdout or "") + (proc.stderr or "")
         tail = "\n".join(combined.splitlines()[-15:])
-        return {"name": name, "script": script, "ok": ok, "seconds": round(dt, 1),
-                "returncode": proc.returncode, "tail": tail, "hint": None if ok else _hint_for(combined)}
+        return {"name": name, "script": script, "ok": ok, "skipped": skipped,
+                "seconds": round(dt, 1),
+                "returncode": proc.returncode, "tail": tail,
+                "hint": None if ok else _hint_for(combined)}
     except subprocess.TimeoutExpired:
         dt = time.monotonic() - t0
         return {"name": name, "script": script, "ok": False, "seconds": round(dt, 1),
@@ -219,9 +228,9 @@ def run_all(only: "set | None" = None, timeout: int = 1800, on_step=None) -> lis
     for name, script in steps:
         print(f"\n=== {name} ({script}) ===", flush=True)
         result = _run_one(name, script, timeout)
-        status = "OK" if result["ok"] else "FAILED"
+        status = "SKIPPED" if result.get("skipped") else ("OK" if result["ok"] else "FAILED")
         print(f"--- {name}: {status} ({result['seconds']}s) ---", flush=True)
-        if not result["ok"]:
+        if not result["ok"] or result.get("skipped"):
             print(result["tail"], flush=True)
             if result.get("hint"):
                 print(f"  HINT: {result['hint']}", flush=True)

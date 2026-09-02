@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { CheckCircle2Icon, CircleDashedIcon, HelpCircleIcon, LoaderCircleIcon, XCircleIcon } from "lucide-react";
+import { CheckCircle2Icon, CircleDashedIcon, HelpCircleIcon, LoaderCircleIcon, MinusCircleIcon, XCircleIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 const AGENT_LABEL = {
   orchestrator: "Orchestrator Agent",
@@ -25,6 +25,10 @@ const SUBSTEP_ICON = {
   running: <LoaderCircleIcon className="size-3 shrink-0 animate-spin text-primary" />,
   failed: <XCircleIcon className="size-3 shrink-0 text-destructive" />,
   unknown: <HelpCircleIcon className="size-3 shrink-0 text-muted-foreground" />,
+  // "skipped" is not "done". A step whose optional dependency or model file
+  // is absent reports itself skipped and exits 2; showing it with a green
+  // tick would claim a measurement that never happened.
+  skipped: <MinusCircleIcon className="size-3 shrink-0 text-muted-foreground" />,
 };
 
 function SubstepList({ substeps }) {
