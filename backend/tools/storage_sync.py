@@ -70,6 +70,31 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_DIR.parent
 GENERATED_DIR = REPO_ROOT / "data" / "generated"
+
+# data/processed/ is NOT under data/generated/, so it was never bundled --
+# and it holds attacks_train.parquet / attacks_held_out.parquet, which are
+# the ONLY thing the three tabular evaluations read. generate/
+# inject_attacks.py is their sole producer.
+#
+# The consequence, seen in run_b1b555224c: a container hydrates "attacks"
+# and "synthetic_customers" from Storage, reuse mode correctly skips
+# generation, and then fusion, behavioral_adjustment and adversarial_tabular
+# all die with
+#     /data/processed/attacks_held_out.parquet not found.
+#     Run generate/inject_attacks.py first.
+# 926 seconds in. "Reuse the stored corpus" cannot work while a third of
+# that corpus is not storable.
+#
+# Treated as one more bundle, named "processed", so push/pull/status handle
+# it through exactly the same code path as the rest.
+PROCESSED_DIR = REPO_ROOT / "data" / "processed"
+PROCESSED_BUNDLE = "processed"
+
+
+def _bundle_root(name: str) -> Path:
+    """Where a bundle's files live. Every bundle is a directory under
+    data/generated/ except `processed`, which is data/processed/ itself."""
+    return PROCESSED_DIR if name == PROCESSED_BUNDLE else GENERATED_DIR / name
 sys.path.insert(0, str(BACKEND_DIR))
 
 BUCKET = "generated-data"
@@ -96,9 +121,12 @@ def _log(msg: str) -> None:
 
 
 def _bundle_names() -> list:
-    if not GENERATED_DIR.exists():
-        return []
-    return sorted(p.name for p in GENERATED_DIR.iterdir() if p.is_dir())
+    names = []
+    if GENERATED_DIR.exists():
+        names = [p.name for p in GENERATED_DIR.iterdir() if p.is_dir()]
+    if PROCESSED_DIR.exists() and any(PROCESSED_DIR.iterdir()):
+        names.append(PROCESSED_BUNDLE)
+    return sorted(names)
 
 
 def _dir_stats(path: Path):
@@ -142,7 +170,7 @@ def _ensure_bucket(client) -> None:
 
 
 def push(only=None) -> int:
-    if not GENERATED_DIR.exists():
+    if not GENERATED_DIR.exists() and not PROCESSED_DIR.exists():
         _log(f"{GENERATED_DIR} does not exist -- nothing to push. Run generate/run_all_generation.py first.")
         return 1
 
@@ -169,7 +197,7 @@ def push(only=None) -> int:
 
     total_bytes = 0
     for name in names:
-        src = GENERATED_DIR / name
+        src = _bundle_root(name)
         n_files, raw_bytes = _dir_stats(src)
         if n_files == 0:
             _log(f"- {name}: empty, skipped")
@@ -227,7 +255,7 @@ def _read_manifest(client) -> dict:
 
 
 def _local_marker(name: str):
-    marker = GENERATED_DIR / name / MARKER_NAME
+    marker = _bundle_root(name) / MARKER_NAME
     if not marker.exists():
         return None
     try:
@@ -250,6 +278,7 @@ def pull(only=None, force=False) -> int:
         names = [n for n in names if n in wanted]
 
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     fetched = 0
     for name in names:
         spec = bundles[name]
@@ -274,7 +303,7 @@ def pull(only=None, force=False) -> int:
             _log(f"  CHECKSUM MISMATCH for {name}: got {digest[:12]}, manifest says {spec['sha256'][:12]}. Not extracting.")
             return 3
 
-        dest = GENERATED_DIR / name
+        dest = _bundle_root(name)
         dest.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / f"{name}.tar.gz"
@@ -293,7 +322,7 @@ def pull(only=None, force=False) -> int:
 def status() -> int:
     local = {}
     for name in _bundle_names():
-        n_files, raw_bytes = _dir_stats(GENERATED_DIR / name)
+        n_files, raw_bytes = _dir_stats(_bundle_root(name))
         local[name] = {"files": n_files, "rawBytes": raw_bytes, "marker": _local_marker(name)}
 
     remote = {}

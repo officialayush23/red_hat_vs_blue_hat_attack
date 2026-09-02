@@ -63,15 +63,22 @@ EVAL_SCRIPT = BACKEND_DIR / "evaluation" / "run_all_evaluations.py"
 ADAPTIVE_SCRIPT = BACKEND_DIR / "evaluation" / "adaptive_weakness_round.py"
 STORAGE_SYNC_SCRIPT = BACKEND_DIR / "tools" / "storage_sync.py"
 GENERATED_DIR = BACKEND_DIR.parent / "data" / "generated"
+PROCESSED_DIR = GENERATED_DIR.parent / "processed"
 
 # Which data/generated/ bundles a family needs, for the hydration step
 # below. Only what the run's own scope requires is pulled -- a
 # transaction-only run has no reason to download 108 MB of voice audio.
+# "processed" is data/processed/, holding attacks_train.parquet and
+# attacks_held_out.parquet -- the ONLY input the three tabular evaluations
+# read. It was missing from this map and from storage_sync's bundle list, so
+# a hydrated container had the tabular CASES but not the tabular FEATURE
+# TABLE, and fusion / behavioral_adjustment / adversarial_tabular each died
+# with "attacks_held_out.parquet not found" 926 seconds into run_b1b555224c.
 BUNDLES_FOR_FAMILY = {
-    "transaction_fraud": ["attacks", "synthetic_customers"],
-    "account_takeover": ["attacks", "synthetic_customers"],
-    "synthetic_identity": ["attacks", "synthetic_customers"],
-    "mule_network": ["attacks", "synthetic_customers"],
+    "transaction_fraud": ["attacks", "synthetic_customers", "processed"],
+    "account_takeover": ["attacks", "synthetic_customers", "processed"],
+    "synthetic_identity": ["attacks", "synthetic_customers", "processed"],
+    "mule_network": ["attacks", "synthetic_customers", "processed"],
     "voice_scam": ["voice_attacks", "voice_bonafide", "synthetic_customers"],
     "document_fraud": ["document_attacks", "document_bonafide"],
     "phishing_scam": ["phishing_attacks", "phishing_bonafide"],
@@ -470,7 +477,7 @@ def _build_weaknesses(family_metrics: dict, weakest) -> list:
 def _bundle_present(name: str) -> bool:
     """A bundle counts as present only if its directory holds real files --
     an empty directory left behind by a partial pull is not data."""
-    d = GENERATED_DIR / name
+    d = PROCESSED_DIR if name == "processed" else GENERATED_DIR / name
     if not d.is_dir():
         return False
     return any(p.is_file() and p.name != ".storage_bundle.json" for p in d.rglob("*"))
@@ -655,8 +662,24 @@ class RunTracker:
         self.meta.update(fields)
         self._flush()
 
-    def finish(self, overall_detected, weakest_stage):
-        self.meta["status"] = "completed"
+    def finish(self, overall_detected, weakest_stage, stage_failures=None):
+        """A run whose stages failed is NOT `completed`.
+
+        run_1252658138 and run_b1b555224c are both cases of this: the
+        tabular evaluations failed outright, and the run still finished as
+        "Completed" with Detection 100.0% and a report recommending nothing.
+        Those numbers were real but not THIS RUN'S -- the orchestrator reads
+        defend/models/metrics.json, a scoreboard carrying every earlier run's
+        entries, and cannot tell "this step just measured 100%" from "this
+        step failed and last week's value is still sitting there".
+
+        The metrics are still recorded; the status says plainly that stages
+        failed, so nothing downstream reads them as a clean result.
+        """
+        failures = list(stage_failures or [])
+        self.meta["status"] = "completed_with_failures" if failures else "completed"
+        if failures:
+            self.meta["stageFailures"] = failures
         self.meta["completedAt"] = _now_iso()
         self.meta["currentIteration"] = self.meta["totalIterations"]
         self._flush()
@@ -816,15 +839,41 @@ def main() -> int:
         # skipping them is how a run ends up scoring fine and persisting zero
         # rows. What is skipped is only the synthesis of new artifacts.
         reuse_cases = args.case_source == "reuse"
-        gen_steps_to_run = ([] if reuse_cases else gen_steps_needed) + [
-            "backfill_attack_cases", "sync_model_registry"]
+        # REUSE STILL NEEDS THE DERIVED TABLE TO EXIST.
+        #
+        # The tabular evaluations read data/processed/attacks_held_out.parquet,
+        # not the stored case JSONs, and generate/inject_attacks.py (the
+        # "tabular_attacks" step) is its only producer. If hydration could not
+        # supply it -- because no machine has pushed the `processed` bundle to
+        # Storage yet -- then skipping generation guarantees three failures 900
+        # seconds from now. Rebuilding it is not "generating fresh attacks":
+        # same seed, same content-hashed ids, so the corpus does not grow. It
+        # is reconstructing a derived artifact that should have been hydrated.
+        needs_tabular = bool(TABULAR_FAMILIES & set(families))
+        rebuild_parquet = (
+            reuse_cases and needs_tabular and not _bundle_present("processed")
+            and "tabular_attacks" in gen_steps_needed
+        )
+        gen_steps_to_run = (
+            (["tabular_attacks"] if rebuild_parquet else [])
+            if reuse_cases else gen_steps_needed
+        ) + ["backfill_attack_cases", "sync_model_registry"]
         gen_only = ",".join(gen_steps_to_run)
         gen_step = tracker.start_step(
             "attack-generator",
-            (f"Reusing the stored corpus -- no generation. Running "
-             f"generate/run_all_generation.py --only {gen_only} ..." if reuse_cases
+            (("Reusing the stored corpus, but data/processed/ was not in Storage, so the "
+              "tabular feature table is being rebuilt (same seed, same case ids -- the corpus "
+              f"does not grow). Running generate/run_all_generation.py --only {gen_only} ..."
+              if rebuild_parquet else
+              f"Reusing the stored corpus -- no generation. Running "
+              f"generate/run_all_generation.py --only {gen_only} ...") if reuse_cases
              else f"Running generate/run_all_generation.py --only {gen_only} ..."))
         gen_args = ["--only", gen_only, "--seed", str(args.seed), "--json"]
+        if rebuild_parquet:
+            # Same knobs as a generate run: inject_attacks.py needs them to
+            # reproduce the same rows rather than a smaller default set.
+            gen_args = ["--only", gen_only, "--n-per-family", str(n_per_family),
+                        "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"]
         if not reuse_cases:
             gen_args = ["--only", gen_only, "--n-per-family", str(n_per_family),
                         "--n-per-split", str(n_per_family), "--seed", str(args.seed), "--json"]
@@ -1070,7 +1119,7 @@ def main() -> int:
                             else f"Adaptive round failed ({adaptive_result['seconds']}s) -- {adaptive_result['tail'][-300:]}"),
                 )
 
-        tracker.finish(overall_detected, weakest_stage)
+        tracker.finish(overall_detected, weakest_stage, stage_failures=stage_failures)
         print(f"Run {run_id} complete.")
         return 0
     except Exception as exc:
