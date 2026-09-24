@@ -1,0 +1,35 @@
+{
+ "txn_type": [
+  "CASH_IN",
+  "CASH_OUT",
+  "DEBIT",
+  "PAYMENT",
+  "TRANSFER"
+ ],
+ "card_type": [
+  "charge card",
+  "credit",
+  "debit",
+  "debit or credit"
+ ],
+ "card_network": [
+  "american express",
+  "discover",
+  "mastercard",
+  "visa"
+ ],
+ "product_cd": [
+  "C",
+  "H",
+  "R",
+  "S",
+  "W"
+ ],
+ "source_dataset": [
+  "ieee_cis",
+  "paysim"
+ ],
+ "behavior_pattern": [
+  "normal_then_abnormal"
+ ]
+}
