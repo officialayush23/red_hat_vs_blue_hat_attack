@@ -1,0 +1,34 @@
+# FraudShield video-KYC worker (worker/worker_api.py).
+#
+# Runs generate/generate_video_kyc_attacks.py and evaluation/eval_video_kyc.py.
+# facenet-pytorch (MTCNN + InceptionResnetV1) hard-pins torch<2.3, while the
+# main image needs torch>=2.5 for transformers>=5 (voice-spoof detector) --
+# verified conflicting, see the main Dockerfile's header. So: its own image.
+#
+# Sizing: ~1-1.5 GB RAM with the face models loaded; 2 GB is comfortable.
+#
+# Env to set on the Render service: WORKER_TOKEN (same value as the main
+# API's), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-worker-base.txt ./
+RUN pip install --no-cache-dir -r requirements-worker-base.txt \
+    && pip install --no-cache-dir "torch>=2.2,<2.3" "torchvision>=0.17,<0.18" \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir facenet-pytorch opencv-python-headless "numpy<2"
+
+# Bake the face-model weights in so a cold start does not download them
+# inside the evaluation step.
+ENV TORCH_HOME=/app/.torch_cache
+RUN python -c "from facenet_pytorch import MTCNN, InceptionResnetV1; MTCNN(); InceptionResnetV1(pretrained='vggface2')" \
+    || echo "face model pre-download failed -- fetched at first use instead"
+
+ENV WORKER_SCRIPTS=generate/generate_video_kyc_attacks.py,evaluation/eval_video_kyc.py \
+    PORT=8000
+COPY . .
+EXPOSE 8000
+CMD ["sh", "-c", "uvicorn worker.worker_api:app --host 0.0.0.0 --port ${PORT}"]

@@ -1,0 +1,12 @@
+# Shared by every worker image (Dockerfile.voice, Dockerfile.videokyc):
+# the worker API itself, Supabase access (Storage bundles + evaluation_results),
+# and what evaluation/metrics.py + supabase_results.py import.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2
+requests>=2.31
+python-dotenv>=1.0
+supabase>=2.9
+numpy>=1.24,<2
+pandas>=2.0
+scikit-learn>=1.3

@@ -1,0 +1,32 @@
+# FraudShield voice-generation worker (worker/worker_api.py).
+#
+# Runs generate/generate_voice_attacks.py -- Chatterbox TTS voice cloning --
+# which cannot live in the main image: chatterbox-tts pins its own torch /
+# transformers versions that conflict with the main stack (see
+# requirements-voice-gen.txt and the main Dockerfile's header).
+#
+# Sizing, honestly: Chatterbox on CPU needs roughly 3-4 GB RAM and runs well
+# below real time. A 512 MB instance will be OOM-killed on model load. Use a
+# 4 GB instance (or a GPU host) for this worker, and keep n-per-split small.
+#
+# Env to set on the Render service: WORKER_TOKEN (same value as the main
+# API's), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, HF_TOKEN.
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-worker-base.txt requirements-voice-gen.txt ./
+# CPU torch wheels first-choice, so chatterbox's torch pin does not pull
+# multi-GB CUDA wheels onto a CPU host.
+RUN pip install --no-cache-dir -r requirements-worker-base.txt \
+    && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r requirements-voice-gen.txt
+
+ENV HF_HOME=/app/.hf_cache \
+    WORKER_SCRIPTS=generate/generate_voice_attacks.py \
+    PORT=8000
+COPY . .
+EXPOSE 8000
+CMD ["sh", "-c", "uvicorn worker.worker_api:app --host 0.0.0.0 --port ${PORT}"]

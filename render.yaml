@@ -1,0 +1,43 @@
+# Render Blueprint for the two worker services. The main API
+# (red-hat-vs-blue-hat-attack, backend/Dockerfile) already exists and is
+# NOT redeclared here, so applying this blueprint cannot duplicate it.
+#
+# After the workers are live, add to the MAIN service's environment:
+#   WORKER_TOKEN          = <same random value as below>
+#   VOICE_WORKER_URL      = https://<fraudshield-voice-worker>.onrender.com
+#   VIDEO_KYC_WORKER_URL  = https://<fraudshield-videokyc-worker>.onrender.com
+# run_all_generation.py / run_all_evaluations.py then send voice_attacks,
+# video_kyc_attacks and video_kyc to these workers (tools/remote_worker.py).
+services:
+  - type: web
+    name: fraudshield-voice-worker
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile.voice
+    # Chatterbox needs ~3-4 GB RAM on CPU -- smaller plans OOM on model load.
+    plan: pro
+    healthCheckPath: /health
+    envVars:
+      - key: WORKER_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+
+  - type: web
+    name: fraudshield-videokyc-worker
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile.videokyc
+    plan: standard
+    healthCheckPath: /health
+    envVars:
+      - key: WORKER_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

@@ -158,6 +158,25 @@ _FAILURE_HINTS = [
 ]
 
 
+# Evaluations that run on a separate worker service when its URL is set
+# (see generate/run_all_generation.py's REMOTE_STEPS and worker/worker_api.py).
+REMOTE_STEPS = {
+    "video_kyc": {"url_env": "VIDEO_KYC_WORKER_URL",
+                  "hydrate": "video_kyc_reference,video_kyc_bonafide,video_kyc_attacks",
+                  "metrics_keys": "video_kyc_detector"},
+}
+
+
+def _remote_argv(name: str, script: str):
+    spec = REMOTE_STEPS.get(name)
+    url = os.environ.get(spec["url_env"], "").strip() if spec else ""
+    if not url:
+        return None
+    return [sys.executable, str(BACKEND_DIR / "tools" / "remote_worker.py"), "--url", url,
+            "--script", f"evaluation/{script}", "--hydrate", spec["hydrate"],
+            "--metrics-keys", spec["metrics_keys"]]
+
+
 def _hint_for(tail: str) -> "str | None":
     lower = tail.lower()
     for needle, hint in _FAILURE_HINTS:
@@ -192,10 +211,11 @@ def _run_one(name: str, script: str, timeout: int, extra_args: "list | None" = N
     if not script_path.exists():
         return {"name": name, "script": script, "ok": False, "seconds": 0.0,
                 "returncode": None, "tail": f"Script not found: {script_path}", "hint": None}
-    interpreter = _interpreter_for(name)
+    remote = _remote_argv(name, script)
+    interpreter = sys.executable if remote else _interpreter_for(name)
     try:
         proc = subprocess.run(
-            [interpreter, str(script_path), *(extra_args or [])],
+            remote or [interpreter, str(script_path), *(extra_args or [])],
             cwd=str(BACKEND_DIR), capture_output=True, text=True, timeout=timeout,
         )
         dt = time.monotonic() - t0
@@ -312,7 +332,7 @@ def main() -> int:
     # copy shipped in the image instead of failing all three in ~11s.
     sys.path.insert(0, str(BACKEND_DIR))
     selected = only or set(STEP_NAMES)
-    needed = sorted({b for st in selected for b in BUNDLES_FOR_STEP.get(st, [])})
+    needed = sorted({b for st in selected if not _remote_argv(st, "") for b in BUNDLES_FOR_STEP.get(st, [])})
     if needed and os.environ.get("SKIP_HYDRATE") != "1":
         print(f"\n=== hydrate ({', '.join(needed)}) ===", flush=True)
         try:

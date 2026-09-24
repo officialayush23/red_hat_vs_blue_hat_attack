@@ -42,6 +42,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -126,6 +127,28 @@ _FAILURE_HINTS = [
 ]
 
 
+# Steps that can run on a separate worker service (worker/worker_api.py,
+# Dockerfile.voice / Dockerfile.videokyc) when their URL env var is set.
+# The URL takes precedence over the local venv, so a laptop with the venvs
+# just leaves these unset.
+REMOTE_STEPS = {
+    "voice_attacks": {"url_env": "VOICE_WORKER_URL",
+                      "hydrate": "voice_attacks,voice_bonafide", "push": "voice_attacks,voice_bonafide"},
+    "video_kyc_attacks": {"url_env": "VIDEO_KYC_WORKER_URL",
+                          "hydrate": "video_kyc_reference,video_kyc_bonafide,video_kyc_attacks",
+                          "push": "video_kyc_attacks"},
+}
+
+
+def _remote_argv(name: str, script: str, extra_args: list):
+    spec = REMOTE_STEPS.get(name)
+    url = os.environ.get(spec["url_env"], "").strip() if spec else ""
+    if not url:
+        return None
+    return [sys.executable, str(BACKEND_DIR / "tools" / "remote_worker.py"), "--url", url,
+            "--script", script, "--hydrate", spec["hydrate"], "--push", spec["push"], "--", *extra_args]
+
+
 def _hint_for(tail: str) -> "str | None":
     lower = tail.lower()
     for needle, hint in _FAILURE_HINTS:
@@ -156,7 +179,8 @@ def _run_one(name: str, script: str, extra_args: list, timeout: int) -> dict:
     if not script_path.exists():
         return {"name": name, "script": script, "ok": False, "seconds": 0.0,
                 "returncode": None, "tail": f"Script not found: {script_path}", "hint": None}
-    interpreter = _interpreter_for(name)
+    remote = _remote_argv(name, script, extra_args)
+    interpreter = sys.executable if remote else _interpreter_for(name)
     if interpreter is None:
         msg = (f"'{VENV_OVERRIDES[name]}' venv is not on this machine, so {name} cannot run here -- "
                f"skipped; the family's stored cases (hydrated from Storage) are still evaluated.")
@@ -164,7 +188,7 @@ def _run_one(name: str, script: str, extra_args: list, timeout: int) -> dict:
                 "returncode": 2, "tail": msg, "hint": None}
     try:
         proc = subprocess.run(
-            [interpreter, str(script_path), *extra_args],
+            remote or [interpreter, str(script_path), *extra_args],
             cwd=str(BACKEND_DIR), capture_output=True, text=True, timeout=timeout,
         )
         dt = time.monotonic() - t0
