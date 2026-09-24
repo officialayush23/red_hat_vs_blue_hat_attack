@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabaseClient";
 import { getRun } from "@/services/api/runs";
-import { listScoredCases, OUTCOME_META, outcomeOf } from "@/services/api/liveCases";
+import { listRunCases, listScoredCasesByFamily, OUTCOME_META, outcomeOf } from "@/services/api/liveCases";
 
 // GET /api/evaluations/:runId/cases
 //
@@ -18,9 +18,42 @@ import { listScoredCases, OUTCOME_META, outcomeOf } from "@/services/api/liveCas
 // is no honest way to say whether an individual model fired. The real score
 // is shown instead, and consumers must not render a triggered/below-
 // threshold verdict they cannot support.
+// 2026-09-24: this read the newest N rows of evaluation_results globally --
+// not this run's, and (because each eval script writes its rows in one
+// batch) all from whichever detector persisted last. That is why the page
+// showed the same few "caught" cases on every run and never a miss. Now:
+// this run's own rows when it has any (campaign join), otherwise a
+// family-balanced sample; misses and false positives first, then one of
+// each family, so the cases worth inspecting are the ones on screen.
+const OUTCOME_PRIORITY = { missed: 0, false_positive: 1, blocked: 2, cleared: 3 };
+function pickInteresting(rows, limit) {
+  const sorted = [...rows].sort(
+    (a, b) => (OUTCOME_PRIORITY[a.outcome] ?? 9) - (OUTCOME_PRIORITY[b.outcome] ?? 9));
+  const out = [];
+  const seen = new Set();
+  // Pass 1: every miss / false positive, up to half the list.
+  for (const r of sorted) {
+    if (out.length >= Math.ceil(limit / 2)) break;
+    if (r.outcome === "missed" || r.outcome === "false_positive") { out.push(r); seen.add(r.id); }
+  }
+  // Pass 2: one case per family not yet shown.
+  const famShown = new Set(out.map((r) => r.family));
+  for (const r of sorted) {
+    if (out.length >= limit) break;
+    if (!seen.has(r.id) && !famShown.has(r.family)) { out.push(r); seen.add(r.id); famShown.add(r.family); }
+  }
+  // Pass 3: fill.
+  for (const r of sorted) {
+    if (out.length >= limit) break;
+    if (!seen.has(r.id)) { out.push(r); seen.add(r.id); }
+  }
+  return out;
+}
+
 export async function listEvaluationCases(runId, limit = 12) {
-  const rows = await listScoredCases(limit);
-  return rows.map((r) => ({
+  let rows = runId ? await listRunCases(runId, 400) : [];
+  if (!rows.length) rows = await listScoredCasesByFamily(Math.max(4, Math.ceil(limit / 2)));
+  return pickInteresting(rows, limit).map((r) => ({
     id: r.id,
     runId,
     caseId: r.caseId,
@@ -105,8 +138,11 @@ const PRIMARY_MODEL_IDS = [
   { id: "document_consistency_detector", name: "PaddleOCR-VL — Document" },
   { id: "video_kyc_detector", name: "FaceNet — Video KYC" },
   { id: "phishing_classifier_evidence_gate", name: "Phishing Classifier (TF-IDF + LogisticRegression)" },
-  { id: "gnn_colab_round5_reported", name: "GraphSAGE — Mule Network (GNN)" },
+  { id: "gnn_adversarial_eval_local_reverify", name: "GraphSAGE — Mule Network (GNN)" },
+  { id: "gnn_colab_round5_reported", name: "GraphSAGE — Mule Network (GNN, Colab-reported)" },
 ];
+// The live GNN eval supersedes the static Colab number when both exist.
+const SUPERSEDED_BY = { gnn_colab_round5_reported: "gnn_adversarial_eval_local_reverify" };
 
 export async function listModelPerformance() {
   const ids = PRIMARY_MODEL_IDS.map(m => m.id);
@@ -119,6 +155,7 @@ export async function listModelPerformance() {
   const byId = Object.fromEntries((data ?? []).map(row => [row.id, row]));
   return PRIMARY_MODEL_IDS
     .filter(({ id }) => byId[id]?.validation_metrics)
+    .filter(({ id }) => !(SUPERSEDED_BY[id] && byId[SUPERSEDED_BY[id]]?.validation_metrics))
     .map(({ id, name }) => {
       const row = byId[id];
       const m = row.validation_metrics ?? {};

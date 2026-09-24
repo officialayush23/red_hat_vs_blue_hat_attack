@@ -82,7 +82,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from defend.fusion import DECISION_BANDS, behavioral_adjustment, fuse_tabular_scores  # noqa: E402
-from defend.train.dataset import load_training_pool, train_val_split  # noqa: E402
+from defend.train.dataset import load_training_pool, load_val_split, train_val_split  # noqa: E402
 from defend.train.preprocessor import TabularPreprocessor  # noqa: E402
 from evaluation.metrics import compute_binary_metrics, record_result  # noqa: E402
 from generate.synthetic_customers import load_roster  # noqa: E402
@@ -148,8 +148,10 @@ def main() -> None:
 
     print("Loading Stage-5 training pool to derive the legitimate comparison set "
           "(train_val_split's validation portion, seed=42)...")
-    pool = load_training_pool()
-    X_train, X_val, y_train, y_val = train_val_split(pool)
+    # Cached validation split when shipped (defend/train/dataset.load_val_split);
+    # identical rows, no 172 MB features.parquet needed.
+    X_val, y_val = load_val_split()
+    pool = X_train = y_train = None
     legit_idx = (y_val == 0).to_numpy()
     legit_X = X_val[legit_idx].copy()
     print(f"  {len(legit_X):,} legitimate rows available (no customer_id -- behavioral_adjustment "

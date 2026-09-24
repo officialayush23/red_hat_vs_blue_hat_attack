@@ -118,6 +118,15 @@ MODEL_META = {
         "signal_category": "graph",
         "artifact_path": "backend/defend/models/gnn.pt",
     },
+    # What evaluation/eval_gnn.py actually writes on every Blue Team run
+    # (the round-5 entry above is a static Colab-reported number).
+    "gnn_adversarial_eval_local_reverify": {
+        "purpose": "GraphSAGE mule-network detector re-scored on this deployment against the held-out "
+                   "mule_network attack rings (evaluation/eval_gnn.py)",
+        "dataset": "data/generated/attacks/held_out/mule_network",
+        "signal_category": "graph",
+        "artifact_path": "backend/defend/models/gnn.pt",
+    },
 }
 
 
@@ -138,7 +147,11 @@ def main() -> None:
 
     rows = []
     for model_id, entry in metrics.items():
-        if model_id.endswith(SKIP_SUFFIXES):
+        # An explicit MODEL_META entry wins over the suffix rule: the
+        # frontend asks for gnn_colab_round5_reported by id, and the suffix
+        # rule silently kept it (and the live GNN eval) out of the registry,
+        # so the GNN never appeared on the Model Performance page.
+        if model_id.endswith(SKIP_SUFFIXES) and model_id not in MODEL_META:
             print(f"  skipping historical entry: {model_id}")
             continue
         meta = MODEL_META.get(model_id, {})

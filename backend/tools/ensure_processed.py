@@ -28,7 +28,38 @@ SEED_DIR = BACKEND_DIR / "seed_data" / "processed"
 REQUIRED = "attacks_held_out.parquet"
 
 
+def _val_split_available() -> bool:
+    """The tabular evals also need the Stage-5 validation split: either the
+    shipped cache (seed_data/processed/val_split.parquet, built by
+    tools/build_val_split_cache.py) or features.parquet to rebuild it."""
+    return any(p.is_file() for p in (
+        SEED_DIR / "val_split.parquet", PROCESSED_DIR / "val_split.parquet",
+        PROCESSED_DIR / "features.parquet"))
+
+
 def ensure_processed(verbose: bool = True) -> dict:
+    r = _ensure_attack_tables(verbose)
+    if not _val_split_available():
+        # Last resort: the full `processed` bundle from Storage (155 MB,
+        # streamed to disk by storage_sync.pull). Only reached when the
+        # val_split cache has not been built and committed yet.
+        msg = "No val_split cache and no features.parquet -- pulling the `processed` bundle from Storage"
+        print(msg, flush=True)
+        try:
+            from tools.storage_sync import pull
+            pull(PROCESSED_BUNDLE)
+        except Exception as exc:
+            print(f"  processed pull failed: {exc}", flush=True)
+        ok = _val_split_available()
+        r["summary"] += f"; {msg}: {'ok' if ok else 'FAILED'}"
+        r["ok"] = r["ok"] and ok
+    return r
+
+
+PROCESSED_BUNDLE = "processed"
+
+
+def _ensure_attack_tables(verbose: bool = True) -> dict:
     target = PROCESSED_DIR / REQUIRED
     if target.is_file() and target.stat().st_size > 0:
         return {"ok": True, "seeded": [], "summary": f"{REQUIRED} already present"}
@@ -39,6 +70,9 @@ def ensure_processed(verbose: bool = True) -> dict:
     seeded = []
     for src in sorted(SEED_DIR.iterdir()):
         dst = PROCESSED_DIR / src.name
+        # val_split is read straight from seed_data by load_val_split(); no copy.
+        if src.name.startswith("val_split"):
+            continue
         if src.is_file() and not dst.exists():
             shutil.copy2(src, dst)
             seeded.append(src.name)
@@ -49,6 +83,7 @@ def ensure_processed(verbose: bool = True) -> dict:
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(BACKEND_DIR))
     r = ensure_processed()
     print(r["summary"])
     sys.exit(0 if r["ok"] else 1)

@@ -273,13 +273,15 @@ def pull(only=None, force=False) -> int:
         wanted = {n.strip() for n in only.split(",") if n.strip()}
         unknown = wanted - set(names)
         if unknown:
-            _log(f"Not in Storage: {sorted(unknown)}. Available: {names}")
-            return 2
+            # Warn and pull the rest: one bundle nobody pushed yet must not
+            # stop every other bundle this run needs from arriving.
+            _log(f"Not in Storage (skipped): {sorted(unknown)}. Available: {names}")
         names = [n for n in names if n in wanted]
 
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     fetched = 0
+    failed = 0
     for name in names:
         spec = bundles[name]
         local = _local_marker(name)
@@ -288,26 +290,30 @@ def pull(only=None, force=False) -> int:
             continue
 
         _log(f"- {name}: downloading {spec['parts']} part(s), {spec['bytes'] / 1e6:.1f} MB...")
-        chunks = []
-        for idx in range(spec["parts"]):
-            key = f"{name}.tar.gz.part{idx:03d}"
-            chunks.append(client.storage.from_(BUCKET).download(key))
-        blob = b"".join(chunks)
-
-        digest = hashlib.sha256(blob).hexdigest()
-        if digest != spec["sha256"]:
-            # Never extract an archive that isn't the one the manifest
-            # describes -- a truncated part would otherwise silently produce
-            # a partial dataset that every downstream metric would be
-            # computed over without anyone noticing.
-            _log(f"  CHECKSUM MISMATCH for {name}: got {digest[:12]}, manifest says {spec['sha256'][:12]}. Not extracting.")
-            return 3
-
         dest = _bundle_root(name)
         dest.mkdir(parents=True, exist_ok=True)
+        # Streamed to a temp file part by part, hashed incrementally. The
+        # old version held every part AND their join in memory at once --
+        # ~2x the bundle size (220 MB for voice_attacks), enough to get the
+        # process OOM-killed on a small container before it wrote a byte.
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / f"{name}.tar.gz"
-            archive.write_bytes(blob)
+            h = hashlib.sha256()
+            with open(archive, "wb") as fh:
+                for idx in range(spec["parts"]):
+                    part = client.storage.from_(BUCKET).download(f"{name}.tar.gz.part{idx:03d}")
+                    h.update(part)
+                    fh.write(part)
+                    del part
+            digest = h.hexdigest()
+            if digest != spec["sha256"]:
+                # Never extract an archive that isn't the one the manifest
+                # describes -- a truncated part would silently produce a
+                # partial dataset. Skip THIS bundle, keep going with the rest.
+                _log(f"  CHECKSUM MISMATCH for {name}: got {digest[:12]}, manifest says "
+                     f"{spec['sha256'][:12]}. Not extracting.")
+                failed += 1
+                continue
             with tarfile.open(archive, mode="r:gz") as tar:
                 tar.extractall(dest)
         (dest / MARKER_NAME).write_text(json.dumps({**spec, "name": name}, indent=2))
@@ -315,8 +321,33 @@ def pull(only=None, force=False) -> int:
         _log(f"  extracted {n_files} files ({raw_bytes / 1e6:.1f} MB) into data/generated/{name}/")
         fetched += 1
 
-    _log(f"\nHydrated {fetched} bundle(s); {len(names) - fetched} already current.")
-    return 0
+    _log(f"\nHydrated {fetched} bundle(s); {len(names) - fetched - failed} already current; {failed} failed.")
+    return 3 if failed else 0
+
+
+def ensure_bundles(names) -> dict:
+    """Pull only the named bundles that are not already on disk. Importable
+    (used by run_all_evaluations.py and agent_runner.py) so every entry point
+    hydrates the same way instead of one of them silently not at all."""
+    names = sorted(set(names))
+    def present(n):
+        root = _bundle_root(n)
+        return root.is_dir() and any(p.is_file() and p.name != MARKER_NAME for p in root.rglob("*"))
+    missing = [n for n in names if not present(n)]
+    if not missing:
+        return {"ok": True, "missing": [], "stillMissing": [],
+                "summary": f"All {len(names)} bundle(s) already on disk"}
+    t0 = time.monotonic()
+    try:
+        rc = pull(",".join(missing))
+        err = None
+    except Exception as exc:
+        rc, err = 1, str(exc)
+    still = [n for n in missing if not present(n)]
+    return {"ok": rc == 0 and not still, "missing": missing, "stillMissing": still,
+            "summary": (f"Pulled {len(missing) - len(still)}/{len(missing)} bundle(s) from Storage in "
+                        f"{time.monotonic() - t0:.0f}s" + (f" -- still missing: {', '.join(still)}" if still else "")
+                        + (f" ({err})" if err else ""))}
 
 
 def status() -> int:

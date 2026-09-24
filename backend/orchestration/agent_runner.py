@@ -1195,38 +1195,32 @@ def main() -> int:
                 # re-derivation from scratch, and never fabricated when
                 # after_r is missing (round2_entry parsed but had no recall).
                 if after_r is not None:
-                    after_recalls = dict(family_recall)
-                    after_recalls[weakest] = after_r
-                    recall_values_after = list(after_recalls.values())
-                    run_recall_after = (round(sum(recall_values_after) / len(recall_values_after), 4)
-                                         if recall_values_after else None)
-                    detection_rate_after = round(run_recall_after * 100, 1) if run_recall_after is not None else None
-                    improvement_pct = (round(detection_rate_after - detection_rate, 1)
-                                        if detection_rate is not None and detection_rate_after is not None else 0)
-                    attacks_caught_after = 0
-                    for fam in families:
-                        n = _family_case_count(case_counts, fam)
-                        r = after_recalls.get(fam)
-                        if n and r is not None:
-                            attacks_caught_after += round(n * r)
-                    attacks_missed_after = max(0, attacks_tested - attacks_caught_after)
+                    # 2026-09-24: this used to splice after_r into the run's
+                    # per-family FUSION recall and re-average. But after_r is
+                    # ONE detector's recall on a harder combo (adaptive_weakness_
+                    # round targets the weakest individual model, and picks its
+                    # own family), so the run-level "detection after" mixed two
+                    # different measurements -- and, with fusion at 1.0, turned
+                    # a single model's miss into a fake drop of the whole
+                    # defense. The round is recorded as its own iteration, in
+                    # its own units; run-level aggregates stay fusion's.
                     hardened_combo = round2_entry.get("hardened_combo") or {}
                     changes = [f"{k}: {v}" for k, v in hardened_combo.items()] or [
                         f"evaluation/adaptive_weakness_round.py -- {new_keys[0]}"
                     ]
+                    model_name, _, fam_name = new_keys[0].partition("_weakness_round2_")
                     mutation_iterations.append({
                         "iteration": 2,
-                        "detectionRate": detection_rate_after,
-                        "weakness": f"{FAMILY_LABEL.get(weakest, weakest)} -- real recall {before_r} -> {after_r} (delta {delta})",
+                        "detectionRate": round(after_r * 100, 1),
+                        "scope": f"{model_name} on {fam_name} (single detector, hardened combo)",
+                        "weakness": (f"{FAMILY_LABEL.get(fam_name, fam_name)} -- {model_name} recall "
+                                     f"{before_r} -> {round(after_r, 4)} (delta {delta}) on the hardened combo"),
                         "changes": changes,
                     })
                     tracker.update_meta({
-                        "attacksCaught": attacks_caught_after,
-                        "attacksMissed": attacks_missed_after,
-                        "detectionRateAfter": detection_rate_after,
-                        "improvementPct": improvement_pct,
-                        "recall": run_recall_after,
                         "mutationIterations": mutation_iterations,
+                        "adaptiveRound": {"model": model_name, "family": fam_name,
+                                          "beforeRecall": before_r, "afterRecall": after_r, "delta": delta},
                     })
             else:
                 tracker.complete_step(

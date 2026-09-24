@@ -97,6 +97,23 @@ STEPS = [
 ]
 STEP_NAMES = [name for name, _ in STEPS]
 
+# Storage bundles (tools/storage_sync.py) each evaluation reads from
+# data/generated/. A fresh container has none of them; POST /evaluations/run
+# used to launch straight into the evaluations with nothing on disk, so the
+# media evals and the backfill prelude found no cases. Hydrated up front now,
+# only for the steps actually selected.
+BUNDLES_FOR_STEP = {
+    "voice_spoof": ["voice_attacks", "voice_bonafide"],
+    "document_consistency": ["document_attacks", "document_bonafide"],
+    "video_kyc": ["video_kyc_attacks", "video_kyc_bonafide", "video_kyc_reference"],
+    "phishing_classifier": ["phishing_attacks", "phishing_bonafide"],
+    "gnn": ["attacks"],
+    "fusion": ["attacks", "synthetic_customers"],
+    "behavioral_adjustment": ["attacks", "synthetic_customers"],
+    "adversarial_tabular": ["attacks"],
+}
+TABULAR_STEPS = {"fusion", "behavioral_adjustment", "adversarial_tabular"}
+
 # Step name -> venv directory name (relative to BACKEND_DIR). Only steps that
 # genuinely need a different interpreter than sys.executable go here -- see
 # module docstring's 2026-08-31 correction.
@@ -282,13 +299,34 @@ def main() -> int:
     # A fresh container (Render) has no data/processed/ -- seed it from the
     # copy shipped in the image instead of failing all three in ~11s.
     sys.path.insert(0, str(BACKEND_DIR))
-    try:
-        from tools.ensure_processed import ensure_processed
-        print(ensure_processed(verbose=False)["summary"], flush=True)
-    except Exception as exc:  # never block the non-tabular evaluations
-        print(f"ensure_processed failed: {exc}", flush=True)
+    selected = only or set(STEP_NAMES)
+    needed = sorted({b for st in selected for b in BUNDLES_FOR_STEP.get(st, [])})
+    if needed and os.environ.get("SKIP_HYDRATE") != "1":
+        print(f"\n=== hydrate ({', '.join(needed)}) ===", flush=True)
+        try:
+            from tools.storage_sync import ensure_bundles
+            print(ensure_bundles(needed)["summary"], flush=True)
+        except Exception as exc:  # a missing bundle fails its own eval, loudly
+            print(f"hydrate failed: {exc}", flush=True)
+    if selected & TABULAR_STEPS:
+        try:
+            from tools.ensure_processed import ensure_processed
+            print(ensure_processed(verbose=False)["summary"], flush=True)
+        except Exception as exc:  # never block the non-tabular evaluations
+            print(f"ensure_processed failed: {exc}", flush=True)
 
     results = run_all(only=only, timeout=args.timeout)
+
+    # POSTLUDE: push the numbers just written to metrics.json into
+    # model_registry. The Model Performance page reads that table, and the
+    # only other sync ran BEFORE the evaluations (in the agent run's
+    # generation stage) -- so it always published the previous run's
+    # numbers, and a standalone /evaluations/run never published at all.
+    print("\n=== sync_model_registry (../db/sync_model_registry.py) ===", flush=True)
+    post = _run_one("sync_model_registry", "../db/sync_model_registry.py", 300)
+    print(f"--- sync_model_registry: {'OK' if post['ok'] else 'FAILED'} ({post['seconds']}s) ---", flush=True)
+    if not post["ok"]:
+        print(post["tail"], flush=True)
     board = scoreboard()
     summary = {
         "results": results,

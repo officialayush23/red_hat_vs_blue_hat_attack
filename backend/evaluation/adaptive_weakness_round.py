@@ -60,7 +60,7 @@ import gc  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from defend.train.dataset import load_training_pool, train_val_split  # noqa: E402
+from defend.train.dataset import load_training_pool, load_val_split, train_val_split  # noqa: E402
 from defend.train.preprocessor import TabularPreprocessor  # noqa: E402
 from evaluation.metrics import compute_binary_metrics, record_result  # noqa: E402
 from evaluation.run_adversarial_eval import (  # noqa: E402
@@ -279,8 +279,10 @@ def main() -> None:
     round2_X = prep.transform_tree(round2_df)
 
     print("\nLoading Stage-5 training pool for the legitimate comparison set (same discipline as run_adversarial_eval.py)...")
-    pool = load_training_pool()
-    X_train, X_val, y_train, y_val = train_val_split(pool)
+    # Cached validation split when shipped (defend/train/dataset.load_val_split);
+    # identical rows, no 172 MB features.parquet needed.
+    X_val, y_val = load_val_split()
+    pool = X_train = y_train = None
     legit_X = X_val[(y_val == 0).to_numpy()].copy()
     del pool, X_train, y_train, X_val, y_val
     gc.collect()

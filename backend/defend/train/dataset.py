@@ -158,3 +158,59 @@ def train_val_split(pool: pd.DataFrame, val_size: float = 0.2, seed: int = 42):
     X = pool[ALL_FEATURE_COLUMNS]
     y = pool[LABEL_COLUMN].astype("int8")
     return train_test_split(X, y, test_size=val_size, random_state=seed, stratify=y)
+
+
+# ---------------------------------------------------------------------------
+# Cached validation split (2026-09-24)
+# ---------------------------------------------------------------------------
+# fusion / behavioral_adjustment / adversarial_tabular / the adaptive round
+# only ever use the VALIDATION portion of train_val_split(load_training_pool())
+# -- but building it means reading the 172 MB features.parquet (1.39M rows)
+# and holding the whole pool in memory. A deployed container has no
+# features.parquet at all, which is the second half of why those three
+# evaluations could not run on Render.
+#
+# train_val_split is deterministic (seed=42, stratified), so its validation
+# half is saved once by tools/build_val_split_cache.py and shipped at
+# backend/seed_data/processed/val_split.parquet. load_val_split() returns
+# exactly the same (X_val, y_val) either way -- the cache is a stored result,
+# not a sample -- and falls back to the full computation when the cache is
+# absent or stale (its row count no longer matches the manifest).
+VAL_CACHE_PATHS = [
+    PROCESSED_DIR / "val_split.parquet",
+    Path(__file__).resolve().parents[2] / "seed_data" / "processed" / "val_split.parquet",
+]
+
+
+def load_val_split():
+    """(X_val, y_val), identical to train_val_split(load_training_pool())'s
+    validation half. Uses the cached parquet when present."""
+    for path in VAL_CACHE_PATHS:
+        if path.is_file():
+            df = pd.read_parquet(path)
+            missing = [c for c in ALL_FEATURE_COLUMNS + [LABEL_COLUMN] if c not in df.columns]
+            if missing:
+                print(f"  val_split cache {path} is missing columns {missing} -- ignoring it")
+                continue
+            cats_path = path.with_suffix(".categories.json")
+            cats = {}
+            if cats_path.is_file():
+                import json
+                cats = json.loads(cats_path.read_text())
+            for col in CATEGORICAL_FEATURES:
+                if col in cats:
+                    # Same category list, same order, as the pool -- models read codes.
+                    df[col] = pd.Categorical(df[col].astype("object").where(df[col].notna(), None)
+                                             .map(lambda v: None if v is None else str(v)),
+                                             categories=cats[col])
+                elif not isinstance(df[col].dtype, pd.CategoricalDtype):
+                    df[col] = df[col].astype("category")
+            y_val = df[LABEL_COLUMN].astype("int8")
+            X_val = df[ALL_FEATURE_COLUMNS]
+            print(f"  Loaded cached validation split ({len(X_val):,} rows) from {path}")
+            return X_val, y_val
+    pool = load_training_pool()
+    _, X_val, _, y_val = train_val_split(pool)
+    del pool
+    gc.collect()
+    return X_val, y_val
