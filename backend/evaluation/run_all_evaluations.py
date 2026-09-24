@@ -278,6 +278,16 @@ def main() -> int:
             print(f"Unknown step name(s): {', '.join(sorted(unknown))}. Valid: {', '.join(STEP_NAMES)}", file=sys.stderr)
             return 2
 
+    # The three tabular evaluations read data/processed/attacks_held_out.parquet.
+    # A fresh container (Render) has no data/processed/ -- seed it from the
+    # copy shipped in the image instead of failing all three in ~11s.
+    sys.path.insert(0, str(BACKEND_DIR))
+    try:
+        from tools.ensure_processed import ensure_processed
+        print(ensure_processed(verbose=False)["summary"], flush=True)
+    except Exception as exc:  # never block the non-tabular evaluations
+        print(f"ensure_processed failed: {exc}", flush=True)
+
     results = run_all(only=only, timeout=args.timeout)
     board = scoreboard()
     summary = {

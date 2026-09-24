@@ -41,3 +41,6 @@ Thumbs.db
 # data/generated/, this is just a duplicate bundled for upload, safe to delete
 colab_document_fraud_package.tar.gz
 .eval_cache/
+
+# Tiny tabular attack tables shipped in the image (see backend/tools/ensure_processed.py)
+!backend/seed_data/processed/*.parquet

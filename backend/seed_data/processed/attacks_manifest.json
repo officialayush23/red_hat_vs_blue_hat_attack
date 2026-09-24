@@ -1,0 +1,22 @@
+{
+  "n_per_family": 500,
+  "seed": 42,
+  "counts": {
+    "transaction_fraud": {
+      "train": 500,
+      "held_out": 500
+    },
+    "account_takeover": {
+      "train": 500,
+      "held_out": 500
+    },
+    "synthetic_identity": {
+      "train": 500,
+      "held_out": 500
+    },
+    "mule_network": {
+      "train": 500,
+      "held_out": 500
+    }
+  }
+}

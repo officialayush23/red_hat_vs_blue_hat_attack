@@ -75,10 +75,10 @@ PROCESSED_DIR = GENERATED_DIR.parent / "processed"
 # TABLE, and fusion / behavioral_adjustment / adversarial_tabular each died
 # with "attacks_held_out.parquet not found" 926 seconds into run_b1b555224c.
 BUNDLES_FOR_FAMILY = {
-    "transaction_fraud": ["attacks", "synthetic_customers", "processed"],
-    "account_takeover": ["attacks", "synthetic_customers", "processed"],
-    "synthetic_identity": ["attacks", "synthetic_customers", "processed"],
-    "mule_network": ["attacks", "synthetic_customers", "processed"],
+    "transaction_fraud": ["attacks", "synthetic_customers"],
+    "account_takeover": ["attacks", "synthetic_customers"],
+    "synthetic_identity": ["attacks", "synthetic_customers"],
+    "mule_network": ["attacks", "synthetic_customers"],
     "voice_scam": ["voice_attacks", "voice_bonafide", "synthetic_customers"],
     "document_fraud": ["document_attacks", "document_bonafide"],
     "phishing_scam": ["phishing_attacks", "phishing_bonafide"],
@@ -482,10 +482,94 @@ def _build_weaknesses(family_metrics: dict, weakest) -> list:
     return out
 
 
+# Individual detectors behind fusion, per tabular family. metrics.json key ->
+# display name. Fusion (the decision-maker) catching 100% hides that it is
+# often ONE detector doing all the work -- that is a real, exploitable gap
+# (evade that one model and the family goes through), and it is what a
+# red-team run exists to surface. See _component_weaknesses().
+COMPONENT_DETECTORS = [
+    ("xgboost_adversarial_eval", "XGBoost"),
+    ("lightgbm_adversarial_eval", "LightGBM"),
+    ("autoencoder_adversarial_eval", "Autoencoder (anomaly)"),
+]
+
+
+def _component_recalls(metrics: dict, fam: str) -> dict:
+    out = {}
+    for key, name in COMPONENT_DETECTORS:
+        r = (metrics.get(key) or {}).get("per_family_recall", {}).get(fam)
+        if isinstance(r, (int, float)):
+            out[name] = float(r)
+    if fam == "mule_network":
+        gnn = None
+        for key in ("gnn_adversarial_eval", "gnn_adversarial_eval_local_reverify"):
+            e = metrics.get(key) or {}
+            r = e.get("per_family_recall", {}).get("mule_network", e.get("metrics", {}).get("recall"))
+            if isinstance(r, (int, float)):
+                gnn = float(r)
+                break
+        if gnn is not None:
+            out["GNN (ring graph)"] = gnn
+    return out
+
+
+def _component_weaknesses(metrics: dict, families: list) -> list:
+    """Detector-level weakness cards for tabular families.
+
+    2026-09-24: every tabular run reported only clean 100% cards because
+    fusion_adversarial_eval.per_family_recall is 1.0 for all four families --
+    while the same metrics.json shows XGBoost at 0.72 on mule_network, the
+    autoencoder at 0.43 on transaction_fraud and the GNN at ~0.002. Those are
+    real misses by real detectors; fusion only hides them because one other
+    model (usually LightGBM) happens to catch everything. A defense resting
+    on a single model is a weakness, so each detector that misses becomes a
+    card, with the fusion result stated plainly next to it."""
+    out = []
+    for fam in families:
+        if fam not in TABULAR_FAMILIES:
+            continue
+        comps = _component_recalls(metrics, fam)
+        missers = {n: r for n, r in comps.items() if r < 1.0}
+        if not missers:
+            continue
+        carriers = sorted(n for n, r in comps.items() if r >= 1.0)
+        fusion_r = (metrics.get("fusion_adversarial_eval") or {}).get("per_family_recall", {}).get(fam)
+        for name, r in sorted(missers.items(), key=lambda kv: kv[1]):
+            det = round(r * 100, 1)
+            reasons = [f"{name} alone caught {det}% of held-out {FAMILY_LABEL.get(fam, fam).lower()} "
+                       f"attacks — {round(100 - det, 1)}% slipped past it."]
+            if fusion_r is not None:
+                reasons.append(
+                    f"Fusion still caught {round(fusion_r * 100, 1)}%"
+                    + (f", carried by {', '.join(carriers)}" if carriers else "")
+                    + (" — a single point of failure: an attacker who evades that one model gets through."
+                       if len(carriers) == 1 else "."))
+            out.append({
+                "id": f"weak-{fam}-{name.split()[0].lower()}",
+                "category": FAMILY_TO_CATEGORY.get(fam, fam),
+                "label": f"{FAMILY_LABEL.get(fam, fam)} — {name}",
+                "family": fam,
+                "detector": name,
+                "detectionRate": det,
+                "missRate": round(100 - det, 1),
+                "kind": "weakness",
+                "scope": "detector",
+                "reasons": reasons,
+                "recommendedAction": (
+                    f"Run an adaptive mutation round on {FAMILY_LABEL.get(fam, fam).lower()} aimed at "
+                    f"{', '.join(carriers) or 'the carrying model'}, and retrain {name} on the missed cases"),
+                "severity": "high" if r < 0.5 else "medium",
+            })
+    out.sort(key=lambda w: w["detectionRate"])
+    return out
+
+
 def _bundle_present(name: str) -> bool:
     """A bundle counts as present only if its directory holds real files --
     an empty directory left behind by a partial pull is not data."""
-    d = PROCESSED_DIR if name == "processed" else GENERATED_DIR / name
+    if name == "processed":
+        return (PROCESSED_DIR / "attacks_held_out.parquet").is_file()
+    d = GENERATED_DIR / name
     if not d.is_dir():
         return False
     return any(p.is_file() and p.name != ".storage_bundle.json" for p in d.rglob("*"))
@@ -506,6 +590,18 @@ def _hydrate_if_needed(families: list) -> dict:
 
     On a machine that already has the data (a developer's laptop) every
     bundle is present and this returns immediately, having done nothing."""
+    # data/processed/ is no longer pulled from Storage (155 MB, mostly
+    # features.parquet which no evaluation reads, held fully in memory by
+    # storage_sync.pull -- too heavy for the Render container). The ~470 KB
+    # the tabular evaluations need ships in the image; see
+    # tools/ensure_processed.py.
+    if TABULAR_FAMILIES & set(families):
+        try:
+            sys.path.insert(0, str(BACKEND_DIR))
+            from tools.ensure_processed import ensure_processed
+            ensure_processed(verbose=False)
+        except Exception as exc:
+            print(f"ensure_processed failed: {exc}", flush=True)
     needed = sorted({b for f in families for b in BUNDLES_FOR_FAMILY.get(f, [])})
     missing = [b for b in needed if not _bundle_present(b)]
     if not missing:
@@ -1009,11 +1105,23 @@ def main() -> int:
         detection_rate = round(run_recall * 100, 1) if run_recall is not None else None
         attack_coverage_pct = round(100 * len(family_metrics) / len(families), 1) if families else 0.0
         weaknesses = _build_weaknesses(family_metrics, weakest) if family_metrics else []
+        component_weak = _component_weaknesses(metrics, families)
+        # Order: family-level misses, then detector-level misses, then clean
+        # results -- AttackSchematic treats weaknesses[0] as the weakest.
+        weaknesses = ([w for w in weaknesses if w.get("kind") == "weakness"] + component_weak
+                      + [w for w in weaknesses if w.get("kind") != "weakness"])
+        weakness_text = None
+        if weakest:
+            weakness_text = f"{FAMILY_LABEL.get(weakest, weakest)} -- real recall {family_recall.get(weakest):.4f}"
+        elif component_weak:
+            cw = component_weak[0]
+            weakest = cw["family"]  # lets severity=adaptive escalate against it
+            weakness_text = (f"{cw['label']} -- detector recall {cw['detectionRate']}% "
+                             f"(fusion still {round(family_recall.get(weakest, 0) * 100, 1)}%)")
         mutation_iterations = [{
             "iteration": 1,
             "detectionRate": detection_rate,
-            "weakness": (f"{FAMILY_LABEL.get(weakest, weakest)} -- real recall {family_recall.get(weakest):.4f}"
-                         if weakest else "No weakness identified this run"),
+            "weakness": weakness_text or "No weakness identified this run",
             "changes": ["Baseline evaluation -- evaluation/run_all_evaluations.py (real subprocess)"],
         }]
         tracker.update_meta({

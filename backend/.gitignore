@@ -29,3 +29,6 @@ kaggle.json
 Thumbs.db
 .vscode/
 .idea/
+
+# Tiny tabular attack tables shipped in the image (see tools/ensure_processed.py)
+!seed_data/processed/*.parquet
