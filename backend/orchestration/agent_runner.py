@@ -1022,8 +1022,10 @@ def main() -> int:
         # The generation stage above always runs backfill_attack_cases; if
         # it succeeded, the evaluation prelude need not repeat the same
         # 25k-row upsert (it took 439s on Render right after a 129s one).
-        if not {"backfill_attack_cases", "backfill_phase2_artifacts"} & {f.split(":")[0] for f in gen_failed_steps}:
-            os.environ["FRAUDSHIELD_BACKFILL_DONE"] = "1"
+        # Set whether it succeeded or not: repeating a backfill that just
+        # failed fails the same way -- observed 2026-09-24, 241s failure in
+        # generation then a 534s failure of the same upsert in the prelude.
+        os.environ["FRAUDSHIELD_BACKFILL_DONE"] = "1"
 
         # ---- 5. blue-team: REAL subprocess ----
         eval_steps_needed = sorted({s for f in families for s in EVAL_STEP_FOR_FAMILY[f]})

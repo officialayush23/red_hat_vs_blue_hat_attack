@@ -354,7 +354,7 @@ def run_all(only: "set | None" = None, timeout: int = 1800, on_step=None) -> lis
         # (129s + 439s for the same upsert in one run, observed 2026-09-24).
         pre = {"name": pre_name, "script": pre_script, "ok": True, "skipped": True, "seconds": 0.0,
                "returncode": 2, "tail": "Backfill already ran in this run's generation stage", "hint": None}
-        print(f"--- {pre_name}: SKIPPED (0.0s) ---", flush=True)
+        print(f"--- {pre_name}: SKIPPED (0.0s) / already attempted in this run's generation stage ---", flush=True)
         results = [pre]
         return _run_steps(results, steps, timeout, on_step)
     pre = _run_one(pre_name, pre_script, timeout, pre_args)
