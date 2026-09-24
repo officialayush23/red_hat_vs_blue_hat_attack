@@ -264,11 +264,14 @@ def _local_marker(name: str):
         return None
 
 
-def pull(only=None, force=False) -> int:
+def pull(only=None, force=False, exclude=None) -> int:
     client = _client()
     manifest = _read_manifest(client)
     bundles = manifest.get("bundles", {})
     names = sorted(bundles)
+    if exclude:
+        skip = {n.strip() for n in exclude.split(",") if n.strip()}
+        names = [n for n in names if n not in skip]
     if only:
         wanted = {n.strip() for n in only.split(",") if n.strip()}
         unknown = wanted - set(names)
@@ -384,12 +387,13 @@ def main() -> int:
     parser.add_argument("command", choices=["push", "pull", "status"])
     parser.add_argument("--only", type=str, default=None, help="Comma-separated bundle names (top-level dirs of data/generated/)")
     parser.add_argument("--force", action="store_true", help="pull: re-download even if the local sha already matches")
+    parser.add_argument("--exclude", type=str, default=None, help="pull: comma-separated bundle names to skip")
     args = parser.parse_args()
 
     if args.command == "push":
         return push(args.only)
     if args.command == "pull":
-        return pull(args.only, args.force)
+        return pull(args.only, args.force, args.exclude)
     return status()
 
 

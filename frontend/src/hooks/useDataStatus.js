@@ -22,14 +22,31 @@ export function useHydrate() {
       // Poll to completion -- pulling ~236 MB takes minutes, and a caller
       // that returns as soon as the job is queued would let the UI claim
       // success while the container is still empty.
+      //
+      // A restarting backend (Render: out of memory, redeploy) answers 502s
+      // for a while and then has no record of the job. Tolerate a run of
+      // failed polls, and treat "lost" as terminal instead of looping on it.
+      let failures = 0;
       for (;;) {
         await new Promise((r) => setTimeout(r, 3000));
-        const state = await getHydrateStatus(run_id);
+        let state;
+        try {
+          state = await getHydrateStatus(run_id);
+          failures = 0;
+        } catch (err) {
+          if (++failures >= 20) throw err; // ~1 minute of an unreachable backend
+          continue;
+        }
+        if (state.status === "lost") {
+          throw new Error(state.error || "The backend restarted and lost this job -- check data status and retry.");
+        }
         if (["completed", "completed_with_failures", "failed_to_launch"].includes(state.status)) {
           return state;
         }
       }
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["data-status"] }),
+    // Re-read what is actually on disk either way -- a lost job may still
+    // have finished some bundles before the restart.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["data-status"] }),
   });
 }

@@ -230,11 +230,21 @@ export async function probeApi(timeoutMs = 4000) {
 // Polls a status endpoint (getEvaluationRunStatus / getGenerationRunStatus)
 // until it reports a terminal status, calling onUpdate after every poll so
 // a caller can drive a progress UI. Returns the final state.
-const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed_to_launch", "stopped"]);
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed_to_launch", "stopped", "lost"]);
 
 export async function pollRunUntilDone(getStatus, runId, { intervalMs = 2000, onUpdate } = {}) {
+  let failures = 0;
   for (;;) {
-    const state = await getStatus(runId);
+    let state;
+    try {
+      state = await getStatus(runId);
+      failures = 0;
+    } catch (err) {
+      // A restarting backend returns 502s for a while; don't abandon the job over one.
+      if (++failures >= 30) throw err;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      continue;
+    }
     onUpdate?.(state);
     if (TERMINAL_STATUSES.has(state.status)) return state;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));

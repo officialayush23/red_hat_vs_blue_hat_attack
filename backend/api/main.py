@@ -201,6 +201,7 @@ async def _execute_subprocess_run(registry: dict, run_id: str, script: Path, ext
         return
 
     state["pid"] = proc.pid
+    _save_job(state)
     stdout, stderr = await asyncio.to_thread(proc.communicate)
     state["finished_at"] = time.time()
     state["returncode"] = proc.returncode
@@ -217,6 +218,20 @@ async def _execute_subprocess_run(registry: dict, run_id: str, script: Path, ext
     state["log_tail"] = "\n".join(output.splitlines()[-40:])
     state["stderr_tail"] = "\n".join(stderr.decode(errors="replace").splitlines()[-40:])
     state["status"] = "completed" if proc.returncode == 0 else "completed_with_failures"
+    _save_job(state)
+
+
+def _job_status(registry: dict, run_id: str, kind: str) -> dict:
+    """Shared status lookup: memory, then disk, then an explanatory 'lost'."""
+    state = registry.get(run_id) or _load_job(run_id)
+    if state is None:
+        return {"run_id": run_id, "job": kind, "status": "lost",
+                "error": (f"This backend instance has no record of that {kind} run -- it restarted "
+                          f"{int(time.time() - _BOOTED_AT)}s ago (out of memory or a redeploy).")}
+    if state.get("status") in ("queued", "running") and run_id not in registry:
+        state = {**state, "status": "lost",
+                 "error": "The process running this job restarted before it finished."}
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -240,10 +255,7 @@ async def start_eval_run(req: RunRequest = RunRequest()):
 
 @app.get("/evaluations/status/{run_id}")
 async def get_eval_status(run_id: str):
-    state = _eval_runs.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail=f"No evaluation run with id {run_id}")
-    return state
+    return _job_status(_eval_runs, run_id, "evaluation")
 
 
 @app.get("/evaluations/runs")
@@ -304,10 +316,7 @@ async def start_generate_run(req: GenerateRunRequest = GenerateRunRequest()):
 
 @app.get("/generate/status/{run_id}")
 async def get_generate_status(run_id: str):
-    state = _gen_runs.get(run_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail=f"No generation run with id {run_id}")
-    return state
+    return _job_status(_gen_runs, run_id, "generation")
 
 
 @app.get("/generate/runs")
@@ -953,6 +962,37 @@ async def data_status():
     }
 
 
+# Job state for hydrate runs is ALSO written to disk. The in-memory registry
+# dies with the process, and on Render the process dies exactly when a
+# hydrate goes wrong: the old storage_sync.pull held every part of every
+# bundle in memory, a "pre-warm" pulled all of them, the instance hit its
+# memory limit and was restarted -- and the frontend's next poll got
+# "404 No hydrate run with id ...", which says nothing about what happened.
+# Now: state survives a worker restart in the same container, and an id
+# this instance has never heard of gets an explanation, not a bare 404.
+_JOBS_DIR = Path(os.environ.get("FRAUDSHIELD_JOBS_DIR", "/tmp/fraudshield_jobs"))
+_BOOTED_AT = time.time()
+
+# Not needed on this image: `processed` is 155 MB of mostly features.parquet
+# (the evals use seed_data/ instead), video-KYC can't run here (Dockerfile).
+DEFAULT_HYDRATE_EXCLUDE = "processed,video_kyc_attacks,video_kyc_bonafide,video_kyc_reference"
+
+
+def _save_job(state: dict) -> None:
+    try:
+        _JOBS_DIR.mkdir(parents=True, exist_ok=True)
+        (_JOBS_DIR / f"{state['run_id']}.json").write_text(json.dumps(state, default=str))
+    except Exception:
+        pass
+
+
+def _load_job(run_id: str):
+    try:
+        return json.loads((_JOBS_DIR / f"{run_id}.json").read_text())
+    except Exception:
+        return None
+
+
 @app.post("/data/hydrate", status_code=202)
 async def hydrate_data(req: HydrateRequest = HydrateRequest()):
     """Pull dataset bundles from Supabase Storage into data/generated/ on
@@ -967,6 +1007,9 @@ async def hydrate_data(req: HydrateRequest = HydrateRequest()):
     extra_args = ["pull"]
     if req.only:
         extra_args += ["--only", req.only]
+    else:
+        extra_args += ["--exclude", DEFAULT_HYDRATE_EXCLUDE]
+    _save_job(_hydrate_runs[run_id])
     if req.force:
         extra_args.append("--force")
 
@@ -981,14 +1024,17 @@ async def hydrate_data(req: HydrateRequest = HydrateRequest()):
             state["status"] = "failed_to_launch"
             state["error"] = repr(exc)
             state["finished_at"] = time.time()
+            _save_job(state)
             return
         state["pid"] = proc.pid
+        _save_job(state)
         stdout, stderr = await asyncio.to_thread(proc.communicate)
         state["finished_at"] = time.time()
         state["returncode"] = proc.returncode
         state["log_tail"] = "\n".join(stdout.decode(errors="replace").splitlines()[-40:])
         state["stderr_tail"] = "\n".join(stderr.decode(errors="replace").splitlines()[-40:])
         state["status"] = "completed" if proc.returncode == 0 else "completed_with_failures"
+        _save_job(state)
 
     asyncio.create_task(_run())
     return {"run_id": run_id, "status": "queued"}
@@ -996,9 +1042,23 @@ async def hydrate_data(req: HydrateRequest = HydrateRequest()):
 
 @app.get("/data/hydrate/status/{run_id}")
 async def hydrate_status(run_id: str):
-    state = _hydrate_runs.get(run_id)
+    state = _hydrate_runs.get(run_id) or _load_job(run_id)
     if state is None:
-        raise HTTPException(status_code=404, detail=f"No hydrate run with id {run_id}")
+        # Terminal, not an error: the job ran on a process that no longer
+        # exists (restarted -- usually out of memory -- or redeployed). The
+        # caller should stop polling and re-read /data/status.
+        return {
+            "run_id": run_id, "job": "hydrate", "status": "lost",
+            "error": ("This backend instance has no record of that job -- it restarted "
+                      f"{int(time.time() - _BOOTED_AT)}s ago (most often out of memory during "
+                      "a large download, or a redeploy). Whatever finished before the restart "
+                      "is on disk; check data status and start again if needed."),
+            "instance_booted_at": _BOOTED_AT,
+        }
+    if state.get("status") == "running" and run_id not in _hydrate_runs:
+        # Saved as running by a process that is gone.
+        state = {**state, "status": "lost",
+                 "error": "The process running this job restarted before it finished."}
     return state
 
 
