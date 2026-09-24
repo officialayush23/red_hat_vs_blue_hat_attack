@@ -961,7 +961,7 @@ def main() -> int:
         gen_steps_to_run = (
             (["tabular_attacks"] if rebuild_parquet else [])
             if reuse_cases else gen_steps_needed
-        ) + ["backfill_attack_cases", "sync_model_registry"]
+        ) + ["backfill_attack_cases", "backfill_phase2_artifacts", "sync_model_registry"]
         gen_only = ",".join(gen_steps_to_run)
         gen_step = tracker.start_step(
             "attack-generator",
@@ -1008,6 +1008,12 @@ def main() -> int:
         # not a fabricated total.
         gen_summary = _parse_json_summary(gen_result.get("stdout", ""))
         case_counts = gen_summary.get("case_counts", {}) if gen_summary else {}
+
+        # The generation stage above always runs backfill_attack_cases; if
+        # it succeeded, the evaluation prelude need not repeat the same
+        # 25k-row upsert (it took 439s on Render right after a 129s one).
+        if not {"backfill_attack_cases", "backfill_phase2_artifacts"} & {f.split(":")[0] for f in gen_failed_steps}:
+            os.environ["FRAUDSHIELD_BACKFILL_DONE"] = "1"
 
         # ---- 5. blue-team: REAL subprocess ----
         eval_steps_needed = sorted({s for f in families for s in EVAL_STEP_FOR_FAMILY[f]})

@@ -232,6 +232,14 @@ def run_all(only: "set | None" = None, timeout: int = 1800, on_step=None) -> lis
     # won't reach Supabase, and each eval now says so loudly on stdout.
     pre_name, pre_script, pre_args = PRELUDE
     print(f"\n=== {pre_name} ({pre_script}) ===", flush=True)
+    if os.environ.get("FRAUDSHIELD_BACKFILL_DONE") == "1":
+        # The agent run's generation stage just ran exactly this backfill
+        # (129s + 439s for the same upsert in one run, observed 2026-09-24).
+        pre = {"name": pre_name, "script": pre_script, "ok": True, "skipped": True, "seconds": 0.0,
+               "returncode": 2, "tail": "Backfill already ran in this run's generation stage", "hint": None}
+        print(f"--- {pre_name}: SKIPPED (0.0s) ---", flush=True)
+        results = [pre]
+        return _run_steps(results, steps, timeout, on_step)
     pre = _run_one(pre_name, pre_script, timeout, pre_args)
     print(f"--- {pre_name}: {'OK' if pre['ok'] else 'FAILED'} ({pre['seconds']}s) ---", flush=True)
     if not pre["ok"]:
@@ -242,6 +250,10 @@ def run_all(only: "set | None" = None, timeout: int = 1800, on_step=None) -> lis
               "be correct.", flush=True)
 
     results = [pre]
+    return _run_steps(results, steps, timeout, on_step)
+
+
+def _run_steps(results: list, steps: list, timeout: int, on_step=None) -> list:
     for name, script in steps:
         print(f"\n=== {name} ({script}) ===", flush=True)
         result = _run_one(name, script, timeout)

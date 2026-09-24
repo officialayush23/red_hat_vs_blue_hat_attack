@@ -142,10 +142,12 @@ def _interpreter_for(name: str) -> str:
     for candidate in (venv_dir / "Scripts" / "python.exe", venv_dir / "bin" / "python"):
         if candidate.exists():
             return str(candidate)
-    print(f"  WARNING: '{name}' is supposed to run in {venv_dir} but that venv doesn't exist here -- "
-          f"falling back to the current interpreter, which will likely fail if the dependency really "
-          f"is missing there too.", flush=True)
-    return sys.executable
+    # 2026-09-24: this used to fall back to sys.executable and let the step
+    # die ("No module named 'datasets'" for voice_attacks on Render, where
+    # voice_gen_env cannot exist -- see the Dockerfile). A step whose
+    # dedicated environment is absent cannot run here; that is a SKIP, not
+    # a failure, and the stored cases for that family are still scored.
+    return None
 
 
 def _run_one(name: str, script: str, extra_args: list, timeout: int) -> dict:
@@ -155,6 +157,11 @@ def _run_one(name: str, script: str, extra_args: list, timeout: int) -> dict:
         return {"name": name, "script": script, "ok": False, "seconds": 0.0,
                 "returncode": None, "tail": f"Script not found: {script_path}", "hint": None}
     interpreter = _interpreter_for(name)
+    if interpreter is None:
+        msg = (f"'{VENV_OVERRIDES[name]}' venv is not on this machine, so {name} cannot run here -- "
+               f"skipped; the family's stored cases (hydrated from Storage) are still evaluated.")
+        return {"name": name, "script": script, "ok": True, "skipped": True, "seconds": 0.0,
+                "returncode": 2, "tail": msg, "hint": None}
     try:
         proc = subprocess.run(
             [interpreter, str(script_path), *extra_args],
@@ -182,8 +189,10 @@ def run_all(args, only: "set | None" = None, timeout: int = 3600, on_step=None) 
         extra_args = arg_builder(args)
         print(f"\n=== {name} ({script} {' '.join(extra_args)}) ===", flush=True)
         result = _run_one(name, script, extra_args, timeout)
-        status = "OK" if result["ok"] else "FAILED"
+        status = "SKIPPED" if result.get("skipped") else ("OK" if result["ok"] else "FAILED")
         print(f"--- {name}: {status} ({result['seconds']}s) ---", flush=True)
+        if result.get("skipped"):
+            print(result["tail"], flush=True)
         if not result["ok"]:
             print(result["tail"], flush=True)
             if result.get("hint"):

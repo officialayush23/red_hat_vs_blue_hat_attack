@@ -93,7 +93,9 @@ class VoiceSpoofDetector:
         import librosa
 
         self._ensure_loaded()
-        audio, _ = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
+        max_s = os.environ.get("VOICE_MAX_SECONDS", "").strip()
+        audio, _ = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True,
+                                duration=float(max_s) if max_s else None)
         inputs = self._feature_extractor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with self._torch.no_grad():
@@ -102,7 +104,62 @@ class VoiceSpoofDetector:
         return float(probs[0, self._spoof_class_index].cpu().item())
 
     def score_batch(self, audio_paths: list) -> np.ndarray:
-        """Simple sequential batch (clear and debuggable over premature
-        batching -- these clips are short and this only runs once per
-        evaluation, not in a latency-sensitive request path)."""
-        return np.array([self.score(p) for p in audio_paths], dtype="float64")
+        """Sequential scoring with an on-disk score cache.
+
+        2026-09-24: the voice_spoof step sat "scoring..." for many minutes
+        on Render every run -- ~170 clips of up to ~30s each through
+        wav2vec2 on a shared CPU, re-scored from scratch each time although
+        neither the clips nor the model had changed. Scores are now cached
+        per (model id, file path, size, mtime, max-seconds), so a clip is
+        only ever scored once per container; a regenerated clip changes
+        size/mtime and is re-scored. The numbers are identical to a cold
+        run -- this skips repeated work, it does not approximate it.
+
+        VOICE_MAX_SECONDS (unset = whole clip, the recorded behavior) caps
+        how much of each clip is scored, for CPU-only hosts that need a
+        faster first run; metrics.json should be read with that in mind."""
+        import json
+        import os
+
+        try:
+            self._torch.set_num_threads(max(1, os.cpu_count() or 1))
+        except Exception:
+            pass
+        cache_path = Path(__file__).resolve().parents[3] / "data" / ".eval_cache" / "voice_scores.json"
+        try:
+            cache = json.loads(cache_path.read_text())
+        except Exception:
+            cache = {}
+        max_s = os.environ.get("VOICE_MAX_SECONDS", "").strip()
+        out, hits = [], 0
+        for i, p in enumerate(audio_paths):
+            p = Path(p)
+            try:
+                st = p.stat()
+                key = f"{MODEL_ID}|{p.as_posix()}|{st.st_size}|{int(st.st_mtime)}|{max_s}"
+            except OSError:
+                key = None
+            if key and key in cache:
+                out.append(cache[key])
+                hits += 1
+                continue
+            v = self.score(p)
+            out.append(v)
+            if key:
+                cache[key] = v
+            if (i + 1) % 20 == 0:
+                print(f"  voice_spoof: scored {i + 1}/{len(audio_paths)} ({hits} from cache)", flush=True)
+                self._save_cache(cache_path, cache)
+        self._save_cache(cache_path, cache)
+        if hits:
+            print(f"  voice_spoof: {hits}/{len(audio_paths)} clip scores reused from cache", flush=True)
+        return np.array(out, dtype="float64")
+
+    @staticmethod
+    def _save_cache(path: Path, cache: dict) -> None:
+        import json
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cache))
+        except Exception:
+            pass

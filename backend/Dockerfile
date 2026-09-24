@@ -51,6 +51,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir torch_geometric
 
+# Bake the voice-spoof model into the image. Without this every cold start
+# (Render restarts/redeploys) re-downloads it from Hugging Face inside the
+# voice_spoof step, which then sits on "scoring..." with nothing scored.
+ENV HF_HOME=/app/.hf_cache
+RUN python -c "from transformers import AutoFeatureExtractor, AutoModelForAudioClassification as M; \
+m='garystafford/wav2vec2-deepfake-voice-detector'; AutoFeatureExtractor.from_pretrained(m); M.from_pretrained(m)" \
+    || echo "voice model pre-download failed -- it will be fetched at first use instead"
+
 COPY . .
 
 ENV PORT=8000

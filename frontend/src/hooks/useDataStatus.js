@@ -10,7 +10,10 @@ export function useDataStatus(enabled = true) {
     queryFn: getDataStatus,
     enabled,
     retry: false,
-    staleTime: 30_000,
+    staleTime: 10_000,
+    // A run hydrates the instance itself; without polling, the "data/generated/
+    // is empty" banner kept showing after the data had already arrived.
+    refetchInterval: 15_000,
   });
 }
 
