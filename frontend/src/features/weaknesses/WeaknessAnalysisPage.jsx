@@ -55,6 +55,14 @@ function WeaknessCard({ w }) {
             {isWeakness ? "Defense weakness detected" : "No misses this run"} — {w.label}
           </CardTitle>
           {isWeakness ? <SeverityBadge severity={w.severity} /> : null}
+          {w.source === "stored" ? (
+            <span
+              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase"
+              title="The heavy model was not run on this host; this is its last real measurement."
+            >
+              Stored result
+            </span>
+          ) : null}
         </div>
         <CardDescription>{ATTACK_CATEGORY_LABEL[w.category] ?? w.category}</CardDescription>
       </CardHeader>

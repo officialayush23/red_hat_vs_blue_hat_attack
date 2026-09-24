@@ -1,3 +1,8 @@
+# OPTIONAL, PAID. Not needed for the free setup: on Render the main service
+# defaults to FRAUDSHIELD_STORED_ONLY=voice_attacks,video_kyc_attacks,
+# voice_spoof,video_kyc and reports those steps as "using stored result".
+# Only apply this blueprint if you later want those models run live.
+#
 # Render Blueprint for the two worker services. The main API
 # (red-hat-vs-blue-hat-attack, backend/Dockerfile) already exists and is
 # NOT redeclared here, so applying this blueprint cannot duplicate it.

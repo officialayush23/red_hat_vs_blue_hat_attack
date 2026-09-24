@@ -177,6 +177,80 @@ def _remote_argv(name: str, script: str):
             "--metrics-keys", spec["metrics_keys"]]
 
 
+# STORED-RESULT FALLBACK (2026-09-24).
+#
+# Some detectors are too heavy for a free CPU instance: the voice-spoof
+# wav2vec2 model sat on "scoring..." for many minutes on Render and stalled
+# the whole run; video-KYC's face models cannot even be installed next to the
+# main stack. For these, a run may use the detector's LAST REAL MEASUREMENT
+# (its metrics.json entry, whose per-case rows are already in
+# evaluation_results) instead of re-measuring -- and must say so plainly:
+# the step is reported SKIPPED with "using stored result: recall X on n=Y,
+# measured <date>", never as OK.
+#
+# A step falls back when any of these holds:
+#   - it is listed in FRAUDSHIELD_STORED_ONLY (comma-separated step names) --
+#     the switch for a host that should never try (Render free tier);
+#   - its model library is not importable in this environment;
+#   - it runs longer than FRAUDSHIELD_STEP_BUDGET seconds (default: no cap),
+#     or crashes -- then the partial attempt is killed and reported.
+STORED_FALLBACK = {
+    "voice_spoof": {"key": "voice_spoof_detector", "module": "transformers"},
+    "video_kyc": {"key": "video_kyc_detector", "module": "facenet_pytorch"},
+    "document_consistency": {"key": "document_consistency_detector", "module": None},
+    "gnn": {"key": "gnn_adversarial_eval_local_reverify", "module": "torch_geometric"},
+}
+
+# Render sets RENDER=true on every service. On a free instance the voice
+# model alone is enough to hit the 512 MB limit -- and an out-of-memory kill
+# takes the WHOLE service down mid-run, which no fallback can catch. So on
+# Render, unless configured otherwise, the heavy steps use stored results and
+# everything else gets a 10-minute budget before falling back.
+RENDER_DEFAULT_STORED_ONLY = "voice_attacks,video_kyc_attacks,voice_spoof,video_kyc"
+RENDER_DEFAULT_BUDGET = "600"
+
+
+def _stored_only() -> set:
+    raw = os.environ.get("FRAUDSHIELD_STORED_ONLY")
+    if raw is None and os.environ.get("RENDER"):
+        raw = RENDER_DEFAULT_STORED_ONLY
+    return {s.strip() for s in (raw or "").split(",") if s.strip()}
+
+
+def _step_budget() -> str:
+    raw = os.environ.get("FRAUDSHIELD_STEP_BUDGET")
+    if raw is None and os.environ.get("RENDER"):
+        raw = RENDER_DEFAULT_BUDGET
+    return (raw or "").strip()
+
+
+def _stored_summary(name: str) -> "str | None":
+    spec = STORED_FALLBACK.get(name)
+    if not spec or not METRICS_JSON.exists():
+        return None
+    try:
+        entry = json.loads(METRICS_JSON.read_text()).get(spec["key"])
+    except Exception:
+        return None
+    if not entry:
+        return None
+    m = entry.get("metrics", {})
+    rec = entry.get("held_out_recall", m.get("recall"))
+    when = entry.get("recorded_at", "an earlier run (see evaluation_runs)")
+    rec_s = f"{rec:.4f}" if isinstance(rec, (int, float)) else "n/a"
+    return (f"using stored result for {spec['key']}: held-out recall {rec_s} on n={m.get('n_samples')} "
+            f"cases, measured {when}; its per-case rows are already in evaluation_results")
+
+
+def _fallback_result(name: str, script: str, reason: str, seconds: float = 0.0) -> "dict | None":
+    stored = _stored_summary(name)
+    if stored is None:
+        return None
+    msg = f"{reason} -- {stored}"
+    return {"name": name, "script": script, "ok": True, "skipped": True, "fallback": "stored",
+            "seconds": round(seconds, 1), "returncode": 2, "tail": msg, "hint": None, "reason": msg}
+
+
 def _hint_for(tail: str) -> "str | None":
     lower = tail.lower()
     for needle, hint in _FAILURE_HINTS:
@@ -213,6 +287,21 @@ def _run_one(name: str, script: str, timeout: int, extra_args: "list | None" = N
                 "returncode": None, "tail": f"Script not found: {script_path}", "hint": None}
     remote = _remote_argv(name, script)
     interpreter = sys.executable if remote else _interpreter_for(name)
+    if name in STORED_FALLBACK and not remote:
+        if name in _stored_only():
+            fb = _fallback_result(name, script, "FRAUDSHIELD_STORED_ONLY lists this step (heavy model not run on this host)")
+            if fb:
+                return fb
+        mod = STORED_FALLBACK[name]["module"]
+        if mod and interpreter == sys.executable:
+            import importlib.util
+            if importlib.util.find_spec(mod) is None:
+                fb = _fallback_result(name, script, f"'{mod}' is not installed in this environment")
+                if fb:
+                    return fb
+        budget = _step_budget()
+        if budget.isdigit():
+            timeout = min(timeout, int(budget))
     try:
         proc = subprocess.run(
             remote or [interpreter, str(script_path), *(extra_args or [])],
@@ -229,12 +318,20 @@ def _run_one(name: str, script: str, timeout: int, extra_args: "list | None" = N
         ok = proc.returncode == 0 or skipped
         combined = (proc.stdout or "") + (proc.stderr or "")
         tail = "\n".join(combined.splitlines()[-15:])
+        if not ok and name in STORED_FALLBACK:
+            last = (combined.strip().splitlines() or ["no output"])[-1][:200]
+            fb = _fallback_result(name, script, f"detector crashed after {dt:.0f}s ({last})", dt)
+            if fb:
+                return fb
         return {"name": name, "script": script, "ok": ok, "skipped": skipped,
                 "seconds": round(dt, 1),
                 "returncode": proc.returncode, "tail": tail,
                 "hint": None if ok else _hint_for(combined)}
     except subprocess.TimeoutExpired:
         dt = time.monotonic() - t0
+        fb = _fallback_result(name, script, f"did not finish within {timeout}s -- stopped", dt)
+        if fb:
+            return fb
         return {"name": name, "script": script, "ok": False, "seconds": round(dt, 1),
                 "returncode": None, "tail": f"TIMED OUT after {timeout}s", "hint": None}
     except Exception as exc:
@@ -278,7 +375,8 @@ def _run_steps(results: list, steps: list, timeout: int, on_step=None) -> list:
         print(f"\n=== {name} ({script}) ===", flush=True)
         result = _run_one(name, script, timeout)
         status = "SKIPPED" if result.get("skipped") else ("OK" if result["ok"] else "FAILED")
-        print(f"--- {name}: {status} ({result['seconds']}s) ---", flush=True)
+        why = f" / {result['reason']}" if result.get("reason") else ""
+        print(f"--- {name}: {status} ({result['seconds']}s){why} ---", flush=True)
         if not result["ok"] or result.get("skipped"):
             print(result["tail"], flush=True)
             if result.get("hint"):
@@ -332,14 +430,18 @@ def main() -> int:
     # copy shipped in the image instead of failing all three in ~11s.
     sys.path.insert(0, str(BACKEND_DIR))
     selected = only or set(STEP_NAMES)
-    needed = sorted({b for st in selected if not _remote_argv(st, "") for b in BUNDLES_FOR_STEP.get(st, [])})
+    needed = sorted({b for st in selected if not _remote_argv(st, "") and st not in _stored_only()
+                     for b in BUNDLES_FOR_STEP.get(st, [])})
     if needed and os.environ.get("SKIP_HYDRATE") != "1":
         print(f"\n=== hydrate ({', '.join(needed)}) ===", flush=True)
         try:
             from tools.storage_sync import ensure_bundles
-            print(ensure_bundles(needed)["summary"], flush=True)
+            t_h = time.monotonic()
+            h = ensure_bundles(needed)
+            print(f"--- hydrate: {'OK' if h['ok'] else 'FAILED'} ({time.monotonic() - t_h:.1f}s) / {h['summary']} ---",
+                  flush=True)
         except Exception as exc:  # a missing bundle fails its own eval, loudly
-            print(f"hydrate failed: {exc}", flush=True)
+            print(f"--- hydrate: FAILED (0.0s) / {exc} ---", flush=True)
     if selected & TABULAR_STEPS:
         try:
             from tools.ensure_processed import ensure_processed

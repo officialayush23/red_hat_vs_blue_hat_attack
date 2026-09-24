@@ -86,6 +86,10 @@ BUNDLES_FOR_FAMILY = {
 
 TABULAR_FAMILIES = {"transaction_fraud", "account_takeover", "synthetic_identity", "mule_network"}
 
+# Single-detector families whose evaluation step can fall back to a stored
+# result (see run_all_evaluations.py STORED_FALLBACK).
+STEP_FOR_STORED_FAMILY = {"voice_scam": "voice_spoof", "document_fraud": "document_consistency"}
+
 # Honest mapping from the frontend's scope categories (types/index.js's
 # ATTACK_CATEGORY_LABEL) to real attack families (split_policy.py's
 # FAMILIES). "qr" has no dedicated family of its own -- document_fraud is
@@ -440,7 +444,10 @@ def _build_weaknesses(family_metrics: dict, weakest) -> list:
             ]
             if fp_note:
                 reasons.append(fp_note)
+            if m.get("source") == "stored":
+                reasons.append("Stored result — not re-measured this run (" + (m.get("storedReason") or "heavy model skipped") + ").")
             out.append({
+                "source": m.get("source", "live"),
                 "id": f"weak-{fam}",
                 "category": FAMILY_TO_CATEGORY.get(fam, fam),
                 "label": FAMILY_LABEL.get(fam, fam),
@@ -468,7 +475,10 @@ def _build_weaknesses(family_metrics: dict, weakest) -> list:
             "easily separated than that the defense is flawless — the next adaptive round should make "
             "them harder rather than treat this as solved."
         )
+        if m.get("source") == "stored":
+            reasons.insert(0, "Stored result — not re-measured this run (" + (m.get("storedReason") or "heavy model skipped") + ").")
         out.append({
+            "source": m.get("source", "live"),
             "id": f"clean-{fam}",
             "category": FAMILY_TO_CATEGORY.get(fam, fam),
             "label": FAMILY_LABEL.get(fam, fam),
@@ -1032,7 +1042,13 @@ def main() -> int:
         eval_result = _run_script_streaming(
             EVAL_SCRIPT, ["--only", eval_only, "--json"],
             on_line=_banner_reporter(tracker, bt_step, "scoring..."))
-        eval_failed_steps = _failed_steps_from(_parse_json_summary(eval_result.get("stdout", "")))
+        _eval_summary = _parse_json_summary(eval_result.get("stdout", "")) or {}
+        eval_failed_steps = _failed_steps_from(_eval_summary)
+        # Steps that used the detector's last real measurement instead of
+        # re-measuring (run_all_evaluations.py STORED_FALLBACK) -- carried
+        # onto the family results and the run meta so every page can say so.
+        stored_steps = {r["name"]: r.get("reason", "") for r in _eval_summary.get("results", [])
+                        if isinstance(r, dict) and r.get("fallback") == "stored"}
         stage_failures.extend(f"blue-team/{f}" for f in eval_failed_steps)
         tracker.complete_step(
             bt_step,
@@ -1053,6 +1069,11 @@ def main() -> int:
             m = _family_metrics_from(metrics, fam)
             if m is not None:
                 family_metrics[fam] = m
+        for fam, m in family_metrics.items():
+            step = STEP_FOR_STORED_FAMILY.get(fam)
+            if step in stored_steps:
+                m["source"] = "stored"
+                m["storedReason"] = stored_steps[step]
         family_recall = {fam: m["recall"] for fam, m in family_metrics.items()}
         # A family that missed nothing is not a weakness. Picking the
         # argmin unconditionally made a run where every family scored
@@ -1144,6 +1165,7 @@ def main() -> int:
             "improvementPct": 0,
             "attackCoveragePct": attack_coverage_pct,
             "weaknesses": weaknesses,
+            "storedResults": [{"step": k, "reason": v} for k, v in stored_steps.items()],
             "mutationIterations": mutation_iterations,
             "weakestCategory": FAMILY_TO_CATEGORY.get(weakest) if weakest else None,
         })

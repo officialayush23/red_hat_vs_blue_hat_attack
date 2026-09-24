@@ -60,9 +60,13 @@ def record_result(results_path, model_name: str, metrics: dict, extra: dict | No
     """
     results_path = Path(results_path)
     data = json.loads(results_path.read_text()) if results_path.exists() else {}
+    from datetime import datetime, timezone
     entry = {"metrics": metrics}
     if extra:
         entry.update(extra)
+    # When this number was measured -- shown when a later run falls back to
+    # it instead of re-measuring (run_all_evaluations.py STORED_FALLBACK).
+    entry["recorded_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data[model_name] = entry
     results_path.parent.mkdir(parents=True, exist_ok=True)
     results_path.write_text(json.dumps(data, indent=2))

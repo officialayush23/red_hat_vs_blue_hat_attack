@@ -181,11 +181,20 @@ def _run_one(name: str, script: str, extra_args: list, timeout: int) -> dict:
                 "returncode": None, "tail": f"Script not found: {script_path}", "hint": None}
     remote = _remote_argv(name, script, extra_args)
     interpreter = sys.executable if remote else _interpreter_for(name)
+    raw = os.environ.get("FRAUDSHIELD_STORED_ONLY")
+    if raw is None and os.environ.get("RENDER"):  # same default as run_all_evaluations.py
+        raw = "voice_attacks,video_kyc_attacks,voice_spoof,video_kyc"
+    stored_only = {x.strip() for x in (raw or "").split(",") if x.strip()}
+    if not remote and name in stored_only:
+        msg = (f"FRAUDSHIELD_STORED_ONLY lists {name} -- not generated on this host; the family's "
+               f"stored cases (hydrated from Storage, already in attack_cases) are evaluated instead.")
+        return {"name": name, "script": script, "ok": True, "skipped": True, "seconds": 0.0,
+                "returncode": 2, "tail": msg, "hint": None, "reason": msg}
     if interpreter is None:
         msg = (f"'{VENV_OVERRIDES[name]}' venv is not on this machine, so {name} cannot run here -- "
                f"skipped; the family's stored cases (hydrated from Storage) are still evaluated.")
         return {"name": name, "script": script, "ok": True, "skipped": True, "seconds": 0.0,
-                "returncode": 2, "tail": msg, "hint": None}
+                "returncode": 2, "tail": msg, "hint": None, "reason": msg}
     try:
         proc = subprocess.run(
             remote or [interpreter, str(script_path), *extra_args],
@@ -214,9 +223,8 @@ def run_all(args, only: "set | None" = None, timeout: int = 3600, on_step=None) 
         print(f"\n=== {name} ({script} {' '.join(extra_args)}) ===", flush=True)
         result = _run_one(name, script, extra_args, timeout)
         status = "SKIPPED" if result.get("skipped") else ("OK" if result["ok"] else "FAILED")
-        print(f"--- {name}: {status} ({result['seconds']}s) ---", flush=True)
-        if result.get("skipped"):
-            print(result["tail"], flush=True)
+        why = f" / {result['reason']}" if result.get("reason") else ""
+        print(f"--- {name}: {status} ({result['seconds']}s){why} ---", flush=True)
         if not result["ok"]:
             print(result["tail"], flush=True)
             if result.get("hint"):
