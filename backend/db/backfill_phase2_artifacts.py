@@ -74,11 +74,59 @@ def _upload_file(client, local_path: Path, storage_path: str) -> str:
     }
     _guessed = mimetypes.guess_type(str(local_path))[0] or "application/octet-stream"
     content_type = _MIME_ALIASES.get(_guessed, _guessed)
-    with open(local_path, "rb") as f:
-        client.storage.from_(BUCKET).upload(
-            storage_path, f, file_options={"content-type": content_type, "upsert": "true"},
-        )
-    return client.storage.from_(BUCKET).get_public_url(storage_path)
+    public_url = client.storage.from_(BUCKET).get_public_url(storage_path)
+
+    # 2026-09-24: every run re-uploaded all ~1,700 artifacts (416 MB) and the
+    # whole backfill died on the first bad response --
+    #   BACKFILL FAILED: Expecting value: line 1 column 1 (char 0)
+    # after 240s on Render: Storage answered one upload with a non-JSON body
+    # (a gateway error page / rate limit) and supabase-py's json parse raised.
+    # Now: an object already in the bucket with the same size is not sent
+    # again, and a failed upload is retried, then reported and skipped -- one
+    # artifact must not keep every case row out of attack_cases.
+    folder, _, name = storage_path.rpartition("/")
+    existing = _existing_objects(client, folder)
+    if existing.get(name) == local_path.stat().st_size:
+        return public_url
+    import time
+    for attempt in range(3):
+        try:
+            with open(local_path, "rb") as f:
+                client.storage.from_(BUCKET).upload(
+                    storage_path, f, file_options={"content-type": content_type, "upsert": "true"},
+                )
+            return public_url
+        except Exception as exc:
+            last = exc
+            time.sleep(2 * (attempt + 1))
+    _UPLOAD_FAILURES.append(f"{storage_path}: {last!r}"[:200])
+    # Keep the row: point at the object if an older copy exists, else no URL.
+    return public_url if name in existing else None
+
+
+_UPLOAD_FAILURES: list = []
+_LISTING_CACHE: dict = {}
+
+
+def _existing_objects(client, folder: str) -> dict:
+    """name -> size for every object already under `folder`, listed once."""
+    if folder in _LISTING_CACHE:
+        return _LISTING_CACHE[folder]
+    out, offset = {}, 0
+    try:
+        while True:
+            page = client.storage.from_(BUCKET).list(folder, {"limit": 1000, "offset": offset})
+            for obj in page or []:
+                size = (obj.get("metadata") or {}).get("size")
+                if obj.get("name"):
+                    out[obj["name"]] = size
+            if not page or len(page) < 1000:
+                break
+            offset += 1000
+    except Exception as exc:
+        print(f"  (could not list {BUCKET}/{folder}: {exc!r} -- uploading everything there)", flush=True)
+    _LISTING_CACHE[folder] = out
+    return out
 
 
 def _document_attack_rows(client) -> list:
@@ -314,37 +362,41 @@ def _upsert(client, table: str, rows: list, batch_size: int = 100) -> int:
 
 def main() -> None:
     client = get_service_client()
+    failed = []
 
-    print("Uploading document_fraud artifacts + backfilling attack_cases...")
-    doc_rows = _document_attack_rows(client) + _document_bonafide_rows(client)
-    n = _upsert(client, "attack_cases", doc_rows)
-    print(f"  {n} document_fraud rows upserted "
-          f"({sum(1 for r in doc_rows if r['is_fraud'])} fraud, {sum(1 for r in doc_rows if not r['is_fraud'])} bonafide)")
+    def section(label, build, table="attack_cases"):
+        # Each family independently: one family's Storage or PostgREST error
+        # (seen: a non-JSON gateway response -> "Expecting value: line 1
+        # column 1") must not keep the other families out of attack_cases.
+        print(f"Backfilling {label}...", flush=True)
+        try:
+            rows = build()
+            if not rows:
+                print(f"  no {label} cases on disk -- skipped", flush=True)
+                return 0
+            n = _upsert(client, table, rows)
+            n_fraud = sum(1 for r in rows if r.get("is_fraud"))
+            print(f"  {n} {label} rows upserted ({n_fraud} fraud, {len(rows) - n_fraud} bonafide)", flush=True)
+            return len(rows)
+        except Exception as exc:
+            failed.append(label)
+            print(f"  {label} FAILED: {exc!r}"[:400], flush=True)
+            return 0
 
-    print("Uploading voice_scam artifacts + backfilling attack_cases...")
-    voice_rows = _voice_attack_rows(client) + _voice_bonafide_rows(client)
-    n = _upsert(client, "attack_cases", voice_rows)
-    print(f"  {n} voice_scam rows upserted "
-          f"({sum(1 for r in voice_rows if r['is_fraud'])} fraud, {sum(1 for r in voice_rows if not r['is_fraud'])} bonafide)")
+    total = 0
+    total += section("document_fraud", lambda: _document_attack_rows(client) + _document_bonafide_rows(client))
+    total += section("voice_scam", lambda: _voice_attack_rows(client) + _voice_bonafide_rows(client))
+    total += section("video_kyc_impersonation", lambda: _video_kyc_rows(client))
+    total += section("phishing_scam", lambda: _phishing_attack_rows() + _phishing_bonafide_rows())
 
-    print("Uploading video_kyc artifacts + backfilling attack_cases...")
-    video_rows = _video_kyc_rows(client)
-    if video_rows:
-        n = _upsert(client, "attack_cases", video_rows)
-        print(f"  {n} video_kyc_impersonation rows upserted "
-              f"({sum(1 for r in video_rows if r['is_fraud'])} fraud, "
-              f"{sum(1 for r in video_rows if not r['is_fraud'])} bonafide)")
-    else:
-        print("  no video_kyc_attacks cases on disk -- run generate/generate_video_kyc_attacks.py first")
-
-    print("Backfilling phishing_scam attack_cases (no Storage upload -- text is the artifact)...")
-    phish_rows = _phishing_attack_rows() + _phishing_bonafide_rows()
-    n = _upsert(client, "attack_cases", phish_rows)
-    print(f"  {n} phishing_scam rows upserted "
-          f"({sum(1 for r in phish_rows if r['is_fraud'])} fraud, {sum(1 for r in phish_rows if not r['is_fraud'])} bonafide)")
-
-    total = len(doc_rows) + len(voice_rows) + len(video_rows) + len(phish_rows)
-    print(f"\nDone. {total} total attack_cases rows (document_fraud + voice_scam + video_kyc_impersonation + phishing_scam, attack + bonafide).")
+    if _UPLOAD_FAILURES:
+        print(f"\n{len(_UPLOAD_FAILURES)} artifact upload(s) failed after retries (rows kept, URL left empty "
+              f"where no older copy exists):", flush=True)
+        for line in _UPLOAD_FAILURES[:10]:
+            print(f"  - {line}", flush=True)
+    print(f"\nDone. {total} attack_cases rows backfilled across phase-2 families.")
+    if failed:
+        raise RuntimeError(f"families that could not be backfilled: {', '.join(failed)}")
 
 
 if __name__ == "__main__":
